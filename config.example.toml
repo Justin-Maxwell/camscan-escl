@@ -7,6 +7,12 @@
 port = 8090
 bind = "127.0.0.1"          # widen only if scanning from another host
 
+[discovery]
+# Advertise over DNS-SD (_uscan._tcp) so front-ends find the device without
+# Manual IP. Needs the optional `zeroconf` package; without it the daemon
+# still runs and Manual IP still works.
+enable = true
+
 [scanner]
 make_and_model = "camscan-escl (Logitech C920)"
 serial = "camscan-0001"

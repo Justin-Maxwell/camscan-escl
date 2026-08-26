@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from . import config as config_mod
+from . import discovery
 from .server import serve
 
 
@@ -18,6 +19,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, help="override server.port")
     parser.add_argument("--bind", help="override server.bind")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--no-discovery", action="store_true",
+                        help="do not advertise over DNS-SD")
+    parser.add_argument("--print-avahi-service", action="store_true",
+                        help="print a static Avahi service file and exit")
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -39,16 +44,28 @@ def main(argv: list[str] | None = None) -> int:
             bind=args.bind or cfg.server.bind,
         ))
 
+    if args.print_avahi_service:
+        print(discovery.avahi_service_xml(cfg), end="")
+        return 0
+
     httpd = serve(cfg)
     logging.info(
         "camscan-escl listening on http://%s:%d/eSCL (config: %s)",
         cfg.server.bind, cfg.server.port, cfg.source_path or "built-in defaults",
     )
+
+    advertiser = None
+    if cfg.discovery.enable and not args.no_discovery:
+        advertiser = discovery.Advertiser(cfg)
+        advertiser.start()
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         logging.info("shutting down")
     finally:
+        if advertiser is not None:
+            advertiser.stop()
         httpd.server_close()
     return 0
 

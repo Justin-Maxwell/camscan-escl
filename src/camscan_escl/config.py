@@ -55,6 +55,14 @@ class CaptureConfig:
 
 
 @dataclass(frozen=True)
+class DiscoveryConfig:
+    # Advertise over DNS-SD so front-ends find the device without Manual IP.
+    # Requires the optional `zeroconf` dependency; without it the daemon runs
+    # and logs a warning.
+    enable: bool = True
+
+
+@dataclass(frozen=True)
 class RigConfig:
     # Physical area the frame covers at rig height, in mm, [width, height],
     # measured in the same orientation the frame ends up after rotate_deg.
@@ -67,6 +75,7 @@ class Config:
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     rig: RigConfig = field(default_factory=RigConfig)
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     source_path: Path | None = None
 
 
@@ -96,6 +105,7 @@ def load(path: Path | None = None) -> Config:
         capture=_subset(
             CaptureConfig, capture_raw, focus=_subset(FocusConfig, focus_raw)
         ),
+        discovery=_subset(DiscoveryConfig, raw.get("discovery", {})),
         rig=RigConfig(
             coverage_mm=tuple(float(v) for v in coverage)
             if coverage

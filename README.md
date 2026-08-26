@@ -37,6 +37,37 @@ As a user service:
 cp systemd/camscan-escl.service ~/.config/systemd/user/
 ```
 
+## Discovery
+
+The daemon advertises itself over DNS-SD as `_uscan._tcp`, so NAPS2's device
+search finds it without Manual IP. That needs the optional dependency:
+
+```bash
+uv pip install -e '.[discovery]'
+```
+
+Without it the daemon runs normally, logs one warning, and Manual IP still
+works. Turn the advert off with `--no-discovery` or `discovery.enable = false`.
+
+Advertisement is in-process, not a static Avahi file, so it disappears when
+the daemon does — a front-end cannot offer a device that is not listening. If
+you want the opposite trade-off (advert survives restarts, may point at
+nothing):
+
+```bash
+camscan-escl --print-avahi-service | sudo tee /etc/avahi/services/camscan-escl.service
+```
+
+**`server.bind` gates who can use it.** At the default `127.0.0.1` the advert
+carries `127.0.0.1`, so only this host can scan — other machines will see the
+device and fail to connect. Widen `bind` to `0.0.0.0` to scan from elsewhere.
+
+Check what is being advertised with:
+
+```bash
+avahi-browse -rt _uscan._tcp
+```
+
 ## Calibrate before trusting the output
 
 Two values decide whether a scan comes out at the right scale:
@@ -60,6 +91,7 @@ meet the dimension contract, which fabricates detail.
 | `src/camscan_escl/capture.py` | subprocess capture, focus, size verification |
 | `src/camscan_escl/jobs.py` | one-at-a-time job records, 5-minute reaping |
 | `src/camscan_escl/server.py` | the `/eSCL` HTTP surface |
+| `src/camscan_escl/discovery.py` | DNS-SD advertisement, Avahi file generation |
 
 ## Testing
 
@@ -103,5 +135,6 @@ document itself flags as written from recollection. Validating it — against
 the spec and against AirSane's generated output — is the first task, per
 §13. Everything downstream of client acceptance is untestable until then.
 
-Also outstanding: mDNS/DNS-SD advertisement (§10, deferred deliberately —
-NAPS2's Manual IP makes it unnecessary for v1).
+Discovery (§10) is no longer deferred: `scanimage -L` finds the device with
+no URL given, and a scan through the discovered name returns a correctly
+sized page. NAPS2's own device search has not yet been tried against it.

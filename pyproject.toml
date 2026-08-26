@@ -11,7 +11,8 @@ requires-python = ">=3.11"
 dependencies = ["Pillow>=10.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+discovery = ["zeroconf>=0.130"]
+dev = ["pytest>=8.0", "zeroconf>=0.130"]
 
 [project.scripts]
 camscan-escl = "camscan_escl.__main__:main"
