@@ -149,8 +149,8 @@ scanimage -d 'airscan:escl:camscan:http://127.0.0.1:8090/eSCL' --format=jpeg > /
 
 ## Spec errata
 
-Two corrections to `docs/camscan-escl-spec.md`, both found by running §11
-stage 2 against the real camera on this host:
+Corrections to `docs/camscan-escl-spec.md`, found by running §11 against the
+real camera and a real front-end on this host:
 
 1. **§11's `scanimage -d 'escl:…'` device name is wrong on Fedora 44.** There
    is no `libsane-escl.so`; the backend ships only as `libsane-airscan.so`,
@@ -166,6 +166,13 @@ stage 2 against the real camera on this host:
    1240px-wide page where the units contract says 1275 — silently, which is
    exactly the failure mode §5 warns about. The daemon declares the union of
    both paper sizes (2550 × 3508) instead. `tests/test_escl.py` guards it.
+
+4. **§6's capabilities skeleton omits `scan:UUID`, and NAPS2 requires it.**
+   `ManualIpForm` creates a device only when `caps.Uuid` *and*
+   `caps.MakeAndModel` are both non-null, and on a null UUID it reports
+   nothing at all — the dialog sits there looking like a network failure. A
+   packet capture showed a clean `200 OK` and the whole document read, which
+   is how it was found. The same UUID goes in the advert's TXT record.
 
 ## Known-unverified
 
