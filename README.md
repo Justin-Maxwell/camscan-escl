@@ -74,9 +74,28 @@ nothing):
 camscan-escl --print-avahi-service | sudo tee /etc/avahi/services/camscan-escl.service
 ```
 
-**`server.bind` gates who can use it.** At the default `127.0.0.1` the advert
-carries `127.0.0.1`, so only this host can scan — other machines will see the
-device and fail to connect. Widen `bind` to `0.0.0.0` to scan from elsewhere.
+**`server.bind` gates who can use it, and it gates discovery too.** At the
+default `127.0.0.1` the advert carries `127.0.0.1`. `sane-airscan` tolerates
+that on the same host; **NAPS2's device search does not — it reports "No
+devices found"**, because it browses on real interfaces and will not use a
+loopback record. So discovery in practice needs:
+
+```toml
+[server]
+bind = "0.0.0.0"
+```
+
+Understand what that opens: **eSCL has no authentication**, so anyone who can
+reach the port can trigger a capture from the webcam. On a laptop that leaves
+trusted networks, this is the wrong default — which is why the shipped default
+stays on loopback.
+
+Reaching it from *another* host also needs firewalld opened, which the local
+case does not:
+
+```bash
+sudo firewall-cmd --add-port=8090/tcp --add-service=mdns --permanent
+```
 
 Check what is being advertised with:
 
