@@ -1,8 +1,11 @@
 """ScanSettings parsing and the two generated documents."""
 
+import uuid
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 
-from camscan_escl import escl
+from camscan_escl import discovery, escl
+from camscan_escl.config import Config
 
 SETTINGS = """<?xml version="1.0" encoding="UTF-8"?>
 <scan:ScanSettings xmlns:pwg="{pwg}" xmlns:scan="{scan}">
@@ -78,6 +81,19 @@ def test_declared_platen_contains_both_a4_and_letter():
     max_h = int(root.find(".//scan:MaxHeight", escl.NS).text)
     assert max_w >= max(escl.A4[0], escl.LETTER[0])
     assert max_h >= max(escl.A4[1], escl.LETTER[1])
+
+
+def test_capabilities_carries_a_uuid_matching_the_advert():
+    # Regression: NAPS2's ManualIpForm creates no device, and says nothing at
+    # all, when caps.Uuid is null. Verified by packet capture against 8.3.2 --
+    # the request succeeds and the dialog just sits there.
+    root = ET.fromstring(escl.capabilities_xml("m", "camscan-0001", 150))
+    el = root.find("scan:UUID", escl.NS)
+    assert el is not None and el.text
+    uuid.UUID(el.text)  # a syntactically valid UUID, not just any string
+
+    cfg = replace(Config(), scanner=replace(Config().scanner, serial="camscan-0001"))
+    assert discovery.txt_records(cfg)["uuid"] == el.text
 
 
 def test_status_is_well_formed():

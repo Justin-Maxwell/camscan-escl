@@ -8,6 +8,7 @@ and against AirSane's generated XML — is the first task, not an afterthought.
 
 from __future__ import annotations
 
+import uuid as _uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
@@ -32,6 +33,16 @@ LETTER = (2550, 3300)
 MAX_REGION = (max(A4[0], LETTER[0]), max(A4[1], LETTER[1]))
 
 COLOR_MODES = ("RGB24", "Grayscale8")
+
+
+def device_uuid(serial: str) -> str:
+    """A stable UUID derived from the serial, so it survives restarts.
+
+    Both the capabilities document and the DNS-SD TXT record must carry the
+    same value: a client that finds the device twice, once by search and once
+    by Manual IP, has to recognise it as one device.
+    """
+    return str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"camscan-escl.{serial}"))
 
 
 def _units_to_mm(units: float) -> float:
@@ -126,7 +137,14 @@ def parse_scan_settings(body: bytes, default_dpi: int) -> ScanSettings:
 
 
 def capabilities_xml(make_and_model: str, serial: str, dpi: int) -> bytes:
-    """ScannerCapabilities. Declares exactly one discrete resolution (§6)."""
+    """ScannerCapabilities. Declares exactly one discrete resolution (§6).
+
+    scan:UUID is not decoration. NAPS2's ManualIpForm gates device creation on
+    `caps.Uuid != null && caps.MakeAndModel != null`; with a null UUID it
+    creates no device, reports no error, and the dialog simply does not
+    advance. Confirmed from a packet capture against NAPS2 8.3.2: 200 OK, the
+    whole document read, socket left open, nothing wrong at any layer below.
+    """
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <scan:ScannerCapabilities
     xmlns:pwg="{PWG}"
@@ -134,6 +152,7 @@ def capabilities_xml(make_and_model: str, serial: str, dpi: int) -> bytes:
   <pwg:Version>2.6</pwg:Version>
   <pwg:MakeAndModel>{_esc(make_and_model)}</pwg:MakeAndModel>
   <pwg:SerialNumber>{_esc(serial)}</pwg:SerialNumber>
+  <scan:UUID>{device_uuid(serial)}</scan:UUID>
   <scan:Platen>
     <scan:PlatenInputCaps>
       <scan:MinWidth>16</scan:MinWidth>

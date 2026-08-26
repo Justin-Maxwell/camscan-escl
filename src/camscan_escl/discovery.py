@@ -15,6 +15,7 @@ import logging
 import socket
 
 from .config import Config
+from .escl import device_uuid
 
 log = logging.getLogger(__name__)
 
@@ -40,10 +41,8 @@ def txt_records(cfg: Config) -> dict[str, str]:
 
 
 def _uuid(cfg: Config) -> str:
-    """A stable UUID derived from the serial, so it survives restarts."""
-    import uuid as _uuid_mod
-
-    return str(_uuid_mod.uuid5(_uuid_mod.NAMESPACE_DNS, f"camscan-escl.{cfg.scanner.serial}"))
+    """The same UUID the capabilities document reports. One source, not two."""
+    return device_uuid(cfg.scanner.serial)
 
 
 def _advertised_host(cfg: Config) -> str:
