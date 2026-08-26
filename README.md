@@ -31,10 +31,26 @@ built-in default, so it runs without one. Start from
 cp config.example.toml ~/.config/camscan-escl/config.toml
 ```
 
-As a user service:
+As a user service — which is how it should run, since anything started from a
+terminal dies with that terminal and the front-end then reports only
+`Connection refused`:
 
 ```bash
 cp systemd/camscan-escl.service ~/.config/systemd/user/
+```
+
+Edit `ExecStart` if you run from a project venv, then:
+
+```bash
+systemctl --user enable --now camscan-escl.service
+```
+
+The unit runs under `ProtectSystem=strict` and `PrivateTmp`; capture still
+works, because the capture command writes only to its own temp directory.
+To survive a full logout, linger has to be on — this needs root:
+
+```bash
+sudo loginctl enable-linger "$USER"
 ```
 
 ## Discovery
@@ -121,7 +137,12 @@ stage 2 against the real camera on this host:
    is no `libsane-escl.so`; the backend ships only as `libsane-airscan.so`,
    so the backend name has to lead: `airscan:escl:camscan:<url>`. The short
    form fails with a bare `Invalid argument` and no further explanation.
-2. **§6's `MaxWidth` of 2480 breaks US Letter.** Letter is 2550 units wide,
+2. **§8's `fswebcam` default does not reach 2304×1536 on this host.** Measured:
+   it negotiates MJPG and returns 1920×1080, silently, which is the risk §13
+   lists third. The ffmpeg form pins `yuyv422` and does get the still mode, so
+   it is now the shipped default; the fswebcam line is kept commented in
+   `config.example.toml`.
+3. **§6's `MaxWidth` of 2480 breaks US Letter.** Letter is 2550 units wide,
    so a client clamps the request to the declared maximum and returns a
    1240px-wide page where the units contract says 1275 — silently, which is
    exactly the failure mode §5 warns about. The daemon declares the union of

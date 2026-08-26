@@ -4,6 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
+# If installed with pipx or `uv pip install --user`. When running from a
+# project venv instead, point this at that interpreter, e.g.
+#   ExecStart=%h/Code/Projects/WebCamScanner/.venv/bin/python -m camscan_escl
+# %h is not expanded inside a venv path by anything else, so write it out.
 ExecStart=%h/.local/bin/camscan-escl
 Restart=on-failure
 RestartSec=5

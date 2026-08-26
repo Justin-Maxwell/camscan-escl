@@ -20,15 +20,20 @@ resolution_dpi = 150        # declare only what the rig can actually deliver
 jpeg_quality = 88
 
 [capture]
-command = "fswebcam -d /dev/video0 -r 2304x1536 --no-banner -S 4 --jpeg 92 %f"
+# ffmpeg, not fswebcam. 2304x1536 exists only in YUYV on the C920, and
+# fswebcam negotiates MJPG and silently returns 1920x1080 -- measured on this
+# host, exactly the failure spec section 8 warns about. ffmpeg pins the pixel
+# format, so it actually gets the still mode. The daemon logs loudly if a
+# capture comes back at the wrong size either way.
+command = "ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 -video_size 2304x1536 -i /dev/video0 -frames:v 3 -update 1 -y %f"
 native_width = 2304
 native_height = 1536
 timeout_s = 30
 rotate_deg = 0              # 90 or 270 if the camera is mounted portrait
 
-# The ffmpeg equivalent, which pins the pixel format explicitly. 2304x1536
-# exists only in YUYV on the C920, so fswebcam may silently give 1920x1080:
-# command = "ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 -video_size 2304x1536 -i /dev/video0 -frames:v 3 -update 1 -y %f"
+# The fswebcam form from the spec, kept for reference. Verify the output size
+# before trusting it:
+# command = "fswebcam -d /dev/video0 -r 2304x1536 --no-banner -S 4 --jpeg 92 %f"
 
 [capture.focus]
 device = "/dev/video0"

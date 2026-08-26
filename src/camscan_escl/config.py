@@ -40,8 +40,12 @@ class FocusConfig:
 
 @dataclass(frozen=True)
 class CaptureConfig:
+    # ffmpeg rather than the spec's fswebcam: 2304x1536 is YUYV-only on the
+    # C920, and fswebcam negotiates MJPG and silently delivers 1920x1080.
+    # Measured on this host; see config.example.toml.
     command: str = (
-        "fswebcam -d /dev/video0 -r 2304x1536 --no-banner -S 4 --jpeg 92 %f"
+        "ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 "
+        "-video_size 2304x1536 -i /dev/video0 -frames:v 3 -update 1 -y %f"
     )
     native_width: int = 2304
     native_height: int = 1536
