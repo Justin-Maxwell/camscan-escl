@@ -113,6 +113,19 @@ Two values decide whether a scan comes out at the right scale:
 - **`capture.focus.absolute`** — from a one-off focus sweep at the working
   distance. Autofocus left on will hunt between pages.
 
+- **`capture.exposure`** — off by default, and worth turning on. Left on
+  auto, the sensor re-decides every capture: a scan on this rig came back with
+  89% of its pixels at 250+ luma from a scene that metered correctly minutes
+  later. Sweep for a value that holds mid-grey, then pin it:
+
+```bash
+for t in 60 90 120 160 220; do v4l2-ctl -d /dev/video0 -c auto_exposure=1 -c exposure_time_absolute=$t; ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 -video_size 2304x1536 -i /dev/video0 -frames:v 3 -update 1 -y /tmp/e$t.png; done
+```
+
+  Pick the one where paper is bright but not clipped, put it in
+  `time_absolute`, and set `lock = true`. Restore auto with
+  `v4l2-ctl -d /dev/video0 -c auto_exposure=3 -c white_balance_automatic=1`.
+
 `scanner.resolution_dpi` should be one the geometry can deliver
 (≈ `3454 / distance_cm`). Declaring more than that would mean upscaling to
 meet the dimension contract, which fabricates detail.

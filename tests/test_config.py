@@ -53,3 +53,22 @@ def test_invalid_configs_are_rejected(tmp_path, body):
     path.write_text(body)
     with pytest.raises(ValueError):
         config_mod.load(path)
+
+
+def test_exposure_lock_is_off_by_default_and_parses_when_set(tmp_path):
+    # A wrong pinned exposure is worse than a variable one, so the shipped
+    # default must stay off; but when set it has to reach CaptureConfig.
+    assert config_mod.Config().capture.exposure.lock is False
+    assert config_mod.Config().capture.exposure.time_absolute is None
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[capture.exposure]\n"
+        "lock = true\n"
+        "time_absolute = 120\n"
+        "white_balance_temperature = 4000\n"
+    )
+    exposure = config_mod.load(path).capture.exposure
+    assert exposure.lock is True
+    assert exposure.time_absolute == 120
+    assert exposure.white_balance_temperature == 4000

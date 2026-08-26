@@ -19,6 +19,15 @@ log = logging.getLogger(__name__)
 AUTOFOCUS_CONTROLS = ("focus_automatic_continuous", "focus_auto")
 FOCUS_ABSOLUTE_CONTROLS = ("focus_absolute",)
 
+# Same rename-across-kernels story as focus. auto_exposure is a menu where 1
+# is Manual Mode and 3 is Aperture Priority; the older exposure_auto uses the
+# same numbering, so one value serves both.
+AUTO_EXPOSURE_CONTROLS = ("auto_exposure", "exposure_auto")
+EXPOSURE_ABSOLUTE_CONTROLS = ("exposure_time_absolute", "exposure_absolute")
+MANUAL_EXPOSURE = 1
+AUTO_WB_CONTROLS = ("white_balance_automatic", "white_balance_temperature_auto")
+WB_TEMPERATURE_CONTROLS = ("white_balance_temperature",)
+
 
 class CaptureError(RuntimeError):
     """The camera did not produce a usable frame."""
@@ -38,6 +47,58 @@ def _v4l2_controls(device: str, timeout_s: int) -> set[str]:
     return {line.split()[0] for line in out.splitlines() if line.strip()}
 
 
+def _set_controls(device: str, steps: list[str], timeout_s: int, what: str) -> None:
+    """Apply v4l2 controls one invocation at a time. Best-effort, never fatal.
+
+    One call per control, not one call with many -c options: a manual control
+    is read-only while its automatic counterpart is enabled, and v4l2-ctl
+    applies the options of a single call in an order that loses that race --
+    "focus_absolute: Permission denied", observed on this rig.
+    """
+    for step in steps:
+        try:
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", device, "-c", step],
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+            if result.returncode != 0 or "denied" in result.stderr.lower():
+                log.warning("%s setup (%s) failed: %s", what, step, result.stderr.strip())
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.warning("%s setup (%s) failed: %s", what, step, exc)
+
+
+def apply_exposure(cfg: CaptureConfig) -> None:
+    """Pin exposure and white balance so scans are repeatable, not ambient."""
+    exposure = cfg.exposure
+    if not exposure.lock:
+        return
+
+    available = _v4l2_controls(exposure.device, cfg.timeout_s)
+    steps: list[str] = []
+
+    if exposure.time_absolute is not None:
+        auto = next((c for c in AUTO_EXPOSURE_CONTROLS if c in available), None)
+        absolute = next((c for c in EXPOSURE_ABSOLUTE_CONTROLS if c in available), None)
+        if auto:
+            steps.append(f"{auto}={MANUAL_EXPOSURE}")
+        if absolute:
+            steps.append(f"{absolute}={exposure.time_absolute}")
+        elif available:
+            log.warning("no exposure control found on %s", exposure.device)
+
+    if exposure.white_balance_temperature is not None:
+        auto_wb = next((c for c in AUTO_WB_CONTROLS if c in available), None)
+        temp = next((c for c in WB_TEMPERATURE_CONTROLS if c in available), None)
+        if auto_wb:
+            steps.append(f"{auto_wb}=0")
+        if temp:
+            steps.append(f"{temp}={exposure.white_balance_temperature}")
+
+    _set_controls(exposure.device, steps, cfg.timeout_s, "exposure")
+
+
 def apply_focus(cfg: CaptureConfig) -> None:
     """Pin focus before capture. Best-effort: a failure here is not fatal."""
     focus = cfg.focus
@@ -51,32 +112,19 @@ def apply_focus(cfg: CaptureConfig) -> None:
     if auto is None and available:
         log.warning("no autofocus control found on %s; leaving focus alone", focus.device)
 
-    # Two invocations, not one. focus_absolute is read-only while continuous
-    # autofocus is enabled, and a single v4l2-ctl call applies its -c options
-    # in an order that loses the race: "focus_absolute: Permission denied".
     steps = []
     if auto:
         steps.append(f"{auto}=0")
     if absolute:
         steps.append(f"{absolute}={focus.absolute}")
 
-    for step in steps:
-        try:
-            result = subprocess.run(
-                ["v4l2-ctl", "-d", focus.device, "-c", step],
-                capture_output=True,
-                text=True,
-                timeout=cfg.timeout_s,
-            )
-            if result.returncode != 0 or "denied" in result.stderr.lower():
-                log.warning("focus setup (%s) failed: %s", step, result.stderr.strip())
-        except (OSError, subprocess.SubprocessError) as exc:
-            log.warning("focus setup (%s) failed: %s", step, exc)
+    _set_controls(focus.device, steps, cfg.timeout_s, "focus")
 
 
 def grab(cfg: CaptureConfig) -> Image.Image:
     """Run the configured capture command and load the frame it wrote."""
     apply_focus(cfg)
+    apply_exposure(cfg)
 
     with tempfile.TemporaryDirectory(prefix="camscan-") as tmp:
         out = Path(tmp) / "frame.jpg"

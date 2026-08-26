@@ -39,6 +39,26 @@ class FocusConfig:
 
 
 @dataclass(frozen=True)
+class ExposureConfig:
+    """Pin exposure and white balance, for the same reason focus is pinned.
+
+    A rig photographing paper wants every scan to come out the same. Left on
+    auto, the sensor re-decides per capture and a bright scene can return a
+    page washed to near-white -- observed on this rig: a scan with 89% of its
+    pixels at 250+ luma, from a frame that was correctly exposed minutes
+    later. Off by default because the right values are rig-specific; see the
+    calibration recipe in README.
+    """
+
+    device: str = "/dev/video0"
+    lock: bool = False
+    # None leaves that control alone, so exposure can be pinned without
+    # touching white balance or the other way round.
+    time_absolute: int | None = None
+    white_balance_temperature: int | None = None
+
+
+@dataclass(frozen=True)
 class CaptureConfig:
     # ffmpeg rather than the spec's fswebcam: 2304x1536 is YUYV-only on the
     # C920, and fswebcam negotiates MJPG and silently delivers 1920x1080.
@@ -56,6 +76,7 @@ class CaptureConfig:
     # anything. 0 = camera and page share an orientation.
     rotate_deg: int = 0
     focus: FocusConfig = field(default_factory=FocusConfig)
+    exposure: ExposureConfig = field(default_factory=ExposureConfig)
 
 
 @dataclass(frozen=True)
@@ -100,6 +121,7 @@ def load(path: Path | None = None) -> Config:
 
     capture_raw = dict(raw.get("capture", {}))
     focus_raw = capture_raw.pop("focus", {})
+    exposure_raw = capture_raw.pop("exposure", {})
     rig_raw = dict(raw.get("rig", {}))
     coverage = rig_raw.pop("coverage_mm", None)
 
@@ -107,7 +129,10 @@ def load(path: Path | None = None) -> Config:
         server=_subset(ServerConfig, raw.get("server", {})),
         scanner=_subset(ScannerConfig, raw.get("scanner", {})),
         capture=_subset(
-            CaptureConfig, capture_raw, focus=_subset(FocusConfig, focus_raw)
+            CaptureConfig,
+            capture_raw,
+            focus=_subset(FocusConfig, focus_raw),
+            exposure=_subset(ExposureConfig, exposure_raw),
         ),
         discovery=_subset(DiscoveryConfig, raw.get("discovery", {})),
         rig=RigConfig(

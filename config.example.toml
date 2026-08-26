@@ -35,6 +35,15 @@ rotate_deg = 0              # 90 or 270 if the camera is mounted portrait
 # before trusting it:
 # command = "fswebcam -d /dev/video0 -r 2304x1536 --no-banner -S 4 --jpeg 92 %f"
 
+[capture.exposure]
+# Off by default: the right numbers are rig-specific, and a wrong pinned
+# exposure is worse than a variable one. Turn this on once you have measured
+# them, or scans will vary with the light in the room -- a bright scene can
+# come back washed to near-white. See README, "Calibrate".
+lock = false
+# time_absolute = 120              # from a sweep at the rig's working light
+# white_balance_temperature = 4000 # kelvin; stops paper going blue or orange
+
 [capture.focus]
 device = "/dev/video0"
 absolute = 40               # from a one-off sweep at the rig's working distance
