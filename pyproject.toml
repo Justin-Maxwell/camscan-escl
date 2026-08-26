@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "camscan-escl"
+version = "0.1.0"
+description = "A minimal eSCL (AirScan) daemon that presents a USB webcam as a flatbed scanner"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["Pillow>=10.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+camscan-escl = "camscan_escl.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/camscan_escl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

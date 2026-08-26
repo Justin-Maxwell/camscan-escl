@@ -1,0 +1,18 @@
+[Unit]
+Description=camscan-escl — eSCL daemon presenting a USB webcam as a scanner
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/camscan-escl
+Restart=on-failure
+RestartSec=5
+# The capture command needs the camera; nothing else needs privilege.
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/camscan-escl
+
+[Install]
+WantedBy=default.target

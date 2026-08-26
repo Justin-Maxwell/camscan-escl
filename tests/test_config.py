@@ -1,0 +1,55 @@
+"""Config loading, including the example file shipped in the repo."""
+
+from pathlib import Path
+
+import pytest
+
+from camscan_escl import config as config_mod
+
+EXAMPLE = Path(__file__).resolve().parents[1] / "config.example.toml"
+
+
+def test_missing_file_yields_defaults():
+    cfg = config_mod.load(Path("/nonexistent/camscan.toml"))
+    assert cfg.server.port == 8090
+    assert cfg.rig.coverage_mm == (210.0, 297.0)
+    assert cfg.source_path is None
+
+
+def test_example_config_parses_and_validates():
+    cfg = config_mod.load(EXAMPLE)
+    assert cfg.server.port == 8090
+    assert cfg.capture.native_width == 2304
+    assert cfg.capture.focus.absolute == 40
+    assert cfg.rig.coverage_mm == (210.0, 297.0)
+    assert cfg.source_path == EXAMPLE
+
+
+def test_nested_focus_table_is_read(tmp_path):
+    path = tmp_path / "c.toml"
+    path.write_text(
+        '[capture]\ncommand = "true %f"\n[capture.focus]\nabsolute = 77\n'
+    )
+    assert config_mod.load(path).capture.focus.absolute == 77
+
+
+def test_unknown_keys_are_ignored(tmp_path):
+    path = tmp_path / "c.toml"
+    path.write_text('[server]\nport = 9000\nfuture_option = "x"\n')
+    assert config_mod.load(path).server.port == 9000
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '[capture]\ncommand = "fswebcam out.jpg"\n',   # no %f
+        "[rig]\ncoverage_mm = [0.0, 297.0]\n",          # zero coverage
+        '[capture]\ncommand = "true %f"\nrotate_deg = 45\n',
+        "[scanner]\njpeg_quality = 0\n",
+    ],
+)
+def test_invalid_configs_are_rejected(tmp_path, body):
+    path = tmp_path / "c.toml"
+    path.write_text(body)
+    with pytest.raises(ValueError):
+        config_mod.load(path)
