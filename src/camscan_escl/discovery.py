@@ -82,6 +82,15 @@ class Advertiser:
             )
             return False
 
+        # IPVersion.All means zeroconf also opens a ::1 socket, and on a host
+        # with no loopback IPv6 route every send on it logs a warning that
+        # says nothing about whether the advert works -- it registers fine
+        # regardless. Drop that one message rather than the whole logger, so
+        # a real zeroconf failure still surfaces.
+        logging.getLogger("zeroconf").addFilter(
+            lambda record: "Network is unreachable" not in record.getMessage()
+        )
+
         cfg = self._cfg
         address = _advertised_host(cfg)
         instance = cfg.discovery.name

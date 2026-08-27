@@ -74,6 +74,26 @@ nothing):
 camscan-escl --print-avahi-service | sudo tee /etc/avahi/services/camscan-escl.service
 ```
 
+### NAPS2's device search does not find this daemon. Use Manual IP.
+
+`sane-airscan` finds it fine (`scanimage -L`, no URL needed). NAPS2 does not,
+and the fault is not in what we advertise. Established by packet capture:
+
+- NAPS2 queries `_uscan._tcp` every two seconds over IPv4 **and** IPv6, and
+  we answer within 50 ms with PTR, TXT, SRV and an address record.
+- Every condition its own `EsclServiceLocator` checks is satisfied:
+  `Labels[1] == "_uscan"`, a lowercase `uuid` TXT key, an A record, an SRV
+  target and port that resolve. Our responses carry the RFC 6762-mandated
+  IP TTL of 255; NAPS2's own queries carry TTL 1.
+- **Publishing identical records through Avahi's responder instead of ours
+  changes nothing.** Avahi answers with six records in the answers section,
+  A and AAAA both, clean cache, no ghost instances -- and across 2572
+  captured frames NAPS2 never opens a socket to port 8090.
+
+So the daemon is discoverable and NAPS2's mDNS client does not act on it.
+Manual IP works and is the supported route. Captures are in `PacketTrace/`
+if anyone wants to take this upstream.
+
 **`server.bind` gates who can use it, and it gates discovery too.** At the
 default `127.0.0.1` the advert carries `127.0.0.1`. `sane-airscan` tolerates
 that on the same host; **NAPS2's device search does not — it reports "No
@@ -197,4 +217,5 @@ the spec and against AirSane's generated output — is the first task, per
 
 Discovery (§10) is no longer deferred: `scanimage -L` finds the device with
 no URL given, and a scan through the discovered name returns a correctly
-sized page. NAPS2's own device search has not yet been tried against it.
+sized page. NAPS2's device search does not act on the advert -- see
+"Discovery" above for the evidence, and use Manual IP with NAPS2.
