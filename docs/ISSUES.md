@@ -40,6 +40,51 @@ and whether `NAPS2.Mdns` has moved past 1.0.1. This may already be fixed.
 
 ---
 
+## 6. A scan takes ~6s, and ~4.8s of that is the camera, not us
+
+**Status:** understood, not fixable without trading resolution
+
+Measured breakdown of a scan with the preview running, after the SIGKILL fix
+that removed 5.3s of dead air:
+
+| phase | time |
+|---|---|
+| release the camera from the preview | 0.16 s |
+| capture | 4.8 s |
+| resume the preview | 0.00 s |
+
+The capture is the camera. Timing ffmpeg's own debug output puts 0.16s in
+process startup and **2.33s between opening the fd and the stream being
+ready** — the uvcvideo driver and the camera firmware doing UVC probe/commit,
+reserving USB bandwidth, allocating buffers, and waiting for a first frame.
+
+Open-to-ready by mode, which localises it to data volume on the wire rather
+than resolution as such:
+
+| mode | open → ready | frame |
+|---|---|---|
+| 640x480 YUYV | 0.27 s | 0.61 MB |
+| 1920x1080 YUYV | 0.61 s | 4.15 MB |
+| 2304x1536 YUYV | 2.33 s | 7.08 MB |
+| 1920x1080 **MJPG** | 0.29 s | compressed |
+
+Same pixel count, half the time, when compressed.
+
+`v4l2-ctl --list-frameintervals` reports **2.000 fps** as the only rate for
+2304x1536, and the C920 is a **USB 2.0 device** (`/sys/.../version` = 2.00,
+so a USB 3 port cannot help — the ceiling is the camera's). 7.08 MB at 2 fps
+is 113 Mbps on a 480 Mbps bus shared with the camera's audio interfaces, so
+the frame rate is bandwidth-limited and each frame is 0.5s apart.
+
+The only lever is MJPG 1920x1080: a capture of ~0.6s and a scan of ~2s. The
+cost is 1080 rows against 1536, and 16:9, so the preview geometry would need
+redoing. Note we already upscale — A4 at 150 dpi wants 1754 rows and the
+sensor gives 1536 — so 1080 would mean upscaling 62% and the declared dpi
+would drift further from honest. Not recommended without a decision to drop
+the declared resolution too.
+
+---
+
 ## 5. GStreamer will not enumerate the v4l2loopback preview device
 
 **Status:** open, worked around
