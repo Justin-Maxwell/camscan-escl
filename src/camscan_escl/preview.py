@@ -86,11 +86,21 @@ def marks(cfg: Config) -> list[Mark]:
     still = (cfg.capture.native_width, cfg.capture.native_height)
     preview = (cfg.preview.width, cfg.preview.height)
     cov_w, cov_h = cfg.rig.coverage_mm
+
+    # rig.coverage_mm describes the frame AFTER capture.rotate_deg, but the
+    # preview shows the sensor's own orientation. With the camera turned, a
+    # portrait page lies across the frame, so both the coverage and each
+    # paper have to be swapped to land the marks where the scan will crop.
+    rotated = cfg.capture.rotate_deg % 180 == 90
+    if rotated:
+        cov_w, cov_h = cov_h, cov_w
     scale = preview[0] / still[0]
     top, bottom = visible_still_rows(still, preview)
 
     out = []
     for name, mm_w, mm_h in cfg.preview.papers:
+        if rotated:
+            mm_w, mm_h = mm_h, mm_w
         # Paper -> still pixels, then still -> preview pixels. The anchor
         # offset must match imaging.render exactly: a mark that disagrees
         # with where the scan crops is worse than no mark.

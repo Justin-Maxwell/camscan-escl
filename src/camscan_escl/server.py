@@ -131,6 +131,7 @@ class ESCLHandler(BaseHTTPRequestHandler):
         body = json.dumps({
             "coverage_mm": list(cfg.rig.coverage_mm),
             "anchor": cfg.rig.anchor,
+            "rotate_deg": cfg.capture.rotate_deg,
             "papers": [list(p) for p in cfg.preview.papers],
             "preview": {"width": cfg.preview.width, "height": cfg.preview.height},
             "still": [cfg.capture.native_width, cfg.capture.native_height],

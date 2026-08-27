@@ -144,17 +144,97 @@ class Window(Gtk.ApplicationWindow):
         box.set_size_request(SIDEBAR_W, -1)
         box.set_hexpand(False)
 
-        head = Gtk.Label(xalign=0)
-        head.set_markup("<b>Frame coverage</b>")
-        box.append(head)
+        # Order follows the job: choose the sizes, say where in the frame,
+        # then size the frame to match.
+        box.append(self._papers_section())
+        box.append(Gtk.Separator())
+        box.append(self._anchor_section())
+        box.append(Gtk.Separator())
+        box.append(self._coverage_section())
 
-        hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=30, width_chars=30)
-        hint.set_markup(
-            "<small>The area the camera sees, in mm. Put a real sheet under "
-            "the camera and adjust until its mark sits on the edges. Every "
-            "scan's scale depends on this.</small>"
-        )
-        box.append(hint)
+        box.append(Gtk.Separator())
+        self.apply_button = Gtk.Button(label="Apply")
+        self.apply_button.add_css_class("suggested-action")
+        self.apply_button.connect("clicked", self._on_apply)
+        box.append(self.apply_button)
+
+        revert = Gtk.Button(label="Reload from daemon")
+        revert.connect("clicked", lambda _b: self._load_settings())
+        box.append(revert)
+
+        self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
+                                width_chars=30)
+        self.status.add_css_class("dim-label")
+        box.append(self.status)
+        return box
+
+    def _heading(self, text: str) -> Gtk.Label:
+        label = Gtk.Label(xalign=0)
+        label.set_markup(f"<b>{text}</b>")
+        return label
+
+    def _note(self, text: str) -> Gtk.Label:
+        label = Gtk.Label(xalign=0, wrap=True, max_width_chars=30, width_chars=30)
+        label.set_markup(f"<small>{text}</small>")
+        return label
+
+    def _papers_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self._heading("Paper sizes"))
+
+        self.landscape_check = Gtk.CheckButton(label="Landscape")
+        self.landscape_check.set_tooltip_text(
+            "Turn the crop frames through 90°, for a camera mounted across "
+            "the page. This sets capture.rotate_deg, so the scan is rotated "
+            "to match and the marks keep telling the truth.")
+        self.landscape_check.connect("toggled", self._on_landscape)
+        box.append(self.landscape_check)
+
+        self.paper_checks = {}
+        self.paper_swatches = {}
+        for name, mm_w, mm_h in KNOWN_PAPERS:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            swatch = Gtk.DrawingArea()
+            swatch.set_size_request(14, 14)
+            swatch.set_valign(Gtk.Align.CENTER)
+            swatch.set_draw_func(self._draw_swatch, name)
+            self.paper_swatches[name] = swatch
+            check = Gtk.CheckButton(label=f"{name}  {mm_w:g}×{mm_h:g}")
+            check.connect("toggled", lambda _c: self._refresh_swatches())
+            self.paper_checks[name] = check
+            row.append(swatch)
+            row.append(check)
+            box.append(row)
+        return box
+
+    def _anchor_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self._heading("Anchor"))
+        box.append(self._note("Which part of the frame a scan is taken from."))
+
+        agrid = Gtk.Grid(column_spacing=10, row_spacing=4)
+        agrid.set_halign(Gtk.Align.START)
+        self.anchor_buttons = {}
+        first = None
+        for r, row in enumerate(ANCHORS):
+            for c, name in enumerate(row):
+                b = Gtk.CheckButton()
+                b.set_tooltip_text(name)
+                b.set_halign(Gtk.Align.CENTER)
+                if first is None:
+                    first = b
+                else:
+                    b.set_group(first)
+                b.connect("toggled", self._on_anchor, name)
+                self.anchor_buttons[name] = b
+                agrid.attach(b, c, r, 1, 1)
+        box.append(agrid)
+        return box
+
+    def _coverage_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self._heading("Frame coverage"))
+        box.append(self._note("Adjust to fit frame to a same-size sheet."))
 
         self.lock_check = Gtk.CheckButton(
             label="Lock to frame shape")
@@ -203,71 +283,6 @@ class Window(Gtk.ApplicationWindow):
             b.connect("clicked", self._on_nudge, factor)
             nudge.append(b)
         box.append(nudge)
-
-        box.append(Gtk.Separator())
-        anchor_head = Gtk.Label(xalign=0)
-        anchor_head.set_markup("<b>Anchor</b>")
-        box.append(anchor_head)
-        anchor_hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
-                                width_chars=30)
-        anchor_hint.set_markup(
-            "<small>Which part of the frame a scan is taken from.</small>"
-        )
-        box.append(anchor_hint)
-
-        agrid = Gtk.Grid(column_spacing=4, row_spacing=4)
-        agrid.set_halign(Gtk.Align.START)
-        self.anchor_buttons = {}
-        first = None
-        for r, row in enumerate(ANCHORS):
-            for c, name in enumerate(row):
-                b = Gtk.ToggleButton()
-                b.set_size_request(40, 40)
-                b.set_tooltip_text(name)
-                if first is None:
-                    first = b
-                else:
-                    b.set_group(first)
-                b.connect("toggled", self._on_anchor, name)
-                self.anchor_buttons[name] = b
-                agrid.attach(b, c, r, 1, 1)
-        box.append(agrid)
-
-        box.append(Gtk.Separator())
-        papers = Gtk.Label(xalign=0)
-        papers.set_markup("<b>Paper sizes</b>")
-        box.append(papers)
-
-        self.paper_checks = {}
-        self.paper_swatches = {}
-        for name, mm_w, mm_h in KNOWN_PAPERS:
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            swatch = Gtk.DrawingArea()
-            swatch.set_size_request(14, 14)
-            swatch.set_valign(Gtk.Align.CENTER)
-            swatch.set_draw_func(self._draw_swatch, name)
-            self.paper_swatches[name] = swatch
-            check = Gtk.CheckButton(label=f"{name}  {mm_w:g}×{mm_h:g}")
-            check.connect("toggled", lambda _c: self._refresh_swatches())
-            self.paper_checks[name] = check
-            row.append(swatch)
-            row.append(check)
-            box.append(row)
-
-        box.append(Gtk.Separator())
-        self.apply_button = Gtk.Button(label="Apply")
-        self.apply_button.add_css_class("suggested-action")
-        self.apply_button.connect("clicked", self._on_apply)
-        box.append(self.apply_button)
-
-        revert = Gtk.Button(label="Reload from daemon")
-        revert.connect("clicked", lambda _b: self._load_settings())
-        box.append(revert)
-
-        self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
-                                width_chars=30)
-        self.status.add_css_class("dim-label")
-        box.append(self.status)
         return box
 
     # -- behaviour ------------------------------------------------------
@@ -284,6 +299,8 @@ class Window(Gtk.ApplicationWindow):
         if self._applying:
             return
         fw, fh = self._frame
+        if self.landscape_check.get_active():
+            fw, fh = fh, fw
         if self.lock_check.get_active():
             self._applying = True
             try:
@@ -326,6 +343,13 @@ class Window(Gtk.ApplicationWindow):
         for swatch in self.paper_swatches.values():
             swatch.queue_draw()
 
+    def _on_landscape(self, _button) -> None:
+        # Rotation changes which way round the frame is, so the locked
+        # height must be recomputed before anything is sent.
+        self._sync_height()
+        if not self._applying:
+            self._on_apply(None)
+
     def _on_anchor(self, button, name: str) -> None:
         if button.get_active() and not self._applying:
             self._on_apply(None)
@@ -344,6 +368,8 @@ class Window(Gtk.ApplicationWindow):
             active = {p[0] for p in data["papers"]}
             for name, check in self.paper_checks.items():
                 check.set_active(name in active)
+            self.landscape_check.set_active(
+                int(data.get("rotate_deg", 0)) % 180 == 90)
             anchor = data.get("anchor", "center")
             if anchor in self.anchor_buttons:
                 self.anchor_buttons[anchor].set_active(True)
@@ -370,6 +396,7 @@ class Window(Gtk.ApplicationWindow):
                        if self.paper_checks[p[0]].get_active()],
             "anchor": next((n for n, b in self.anchor_buttons.items()
                             if b.get_active()), "center"),
+            "rotate_deg": 90 if self.landscape_check.get_active() else 0,
         }
         self.apply_button.set_sensitive(False)
         self._say("applying…")

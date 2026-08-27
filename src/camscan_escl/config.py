@@ -256,6 +256,10 @@ def apply_adjustments(cfg: Config, data: dict) -> Config:
     coverage = data.get("coverage_mm")
     papers = data.get("papers")
     anchor = data.get("anchor")
+    rotate = data.get("rotate_deg")
+    if rotate is not None:
+        cfg = replace(cfg, capture=replace(cfg.capture,
+                                           rotate_deg=int(rotate) % 360))
     if coverage and len(coverage) == 2:
         cfg = replace(cfg, rig=replace(cfg.rig,
                                        coverage_mm=(float(coverage[0]),
@@ -279,6 +283,7 @@ def save_adjustments(cfg: Config, path: Path | None = None) -> Path:
                     "file to fall back to config.toml.",
         "coverage_mm": list(cfg.rig.coverage_mm),
         "anchor": cfg.rig.anchor,
+        "rotate_deg": cfg.capture.rotate_deg,
         "papers": [list(p) for p in cfg.preview.papers],
     }
     tmp = path.with_suffix(".json.tmp")
@@ -296,7 +301,11 @@ def validate(cfg: Config) -> None:
     # the symptom is silent: every scan comes out stretched by this ratio and
     # the dimensions still satisfy the units contract, so nothing else
     # complains. Measured on this rig at 2.05x before anyone noticed.
-    frame_aspect = cfg.capture.native_width / cfg.capture.native_height
+    # After rotation: coverage describes the frame the scan works from.
+    fw, fh = cfg.capture.native_width, cfg.capture.native_height
+    if cfg.capture.rotate_deg % 180 == 90:
+        fw, fh = fh, fw
+    frame_aspect = fw / fh
     cov_aspect = cfg.rig.coverage_mm[0] / cfg.rig.coverage_mm[1]
     skew = max(frame_aspect, cov_aspect) / min(frame_aspect, cov_aspect)
     if skew > 1.02:
