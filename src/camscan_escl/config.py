@@ -95,6 +95,34 @@ class DiscoveryConfig:
 
 
 @dataclass(frozen=True)
+class PreviewConfig:
+    """A live preview for positioning, with crop marks.
+
+    The size must be a 16:9 mode. Measured on the C920: 16:9 modes are the
+    still's full width with a centred vertical crop, so preview pixels map
+    onto still pixels exactly; 4:3 modes are zoomed to a narrower horizontal
+    field and cannot be mapped by cropping. See preview.py.
+    """
+
+    enable: bool = True
+    width: int = 1280
+    height: int = 720
+    fps: int = 15
+    # %d device, %s WxH, %r fps. MJPG so frames need no re-encoding: they
+    # come off the camera as JPEG and are sliced straight out of the stream.
+    command: str = (
+        "ffmpeg -loglevel error -f v4l2 -input_format mjpeg -video_size %s "
+        "-framerate %r -i %d -c:v copy -f mjpeg pipe:1"
+    )
+    # Paper sizes to draw, as name = [width_mm, height_mm].
+    papers: tuple[tuple[str, float, float], ...] = (
+        ("A4", 210.0, 297.0),
+        ("A5", 148.0, 210.0),
+        ("Letter", 215.9, 279.4),
+    )
+
+
+@dataclass(frozen=True)
 class RigConfig:
     # Physical area the frame covers at rig height, in mm, [width, height],
     # measured in the same orientation the frame ends up after rotate_deg.
@@ -108,6 +136,7 @@ class Config:
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     rig: RigConfig = field(default_factory=RigConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
+    preview: PreviewConfig = field(default_factory=PreviewConfig)
     source_path: Path | None = None
 
 
@@ -116,6 +145,21 @@ def _subset(cls, data: dict, **overrides):
     known = {f.name for f in cls.__dataclass_fields__.values()}
     kwargs = {k: v for k, v in data.items() if k in known and k not in overrides}
     return cls(**kwargs, **overrides)
+
+
+def _preview(raw: dict) -> PreviewConfig:
+    """PreviewConfig, converting a [preview.papers] table into a tuple."""
+    data = dict(raw)
+    papers = data.pop("papers", None)
+    if papers is None:
+        return _subset(PreviewConfig, data)
+    return _subset(
+        PreviewConfig,
+        data,
+        papers=tuple(
+            (name, float(dims[0]), float(dims[1])) for name, dims in papers.items()
+        ),
+    )
 
 
 def load(path: Path | None = None) -> Config:
@@ -142,6 +186,7 @@ def load(path: Path | None = None) -> Config:
             exposure=_subset(ExposureConfig, exposure_raw),
         ),
         discovery=_subset(DiscoveryConfig, raw.get("discovery", {})),
+        preview=_preview(raw.get("preview", {})),
         rig=RigConfig(
             coverage_mm=tuple(float(v) for v in coverage)
             if coverage
@@ -164,3 +209,16 @@ def validate(cfg: Config) -> None:
         raise ValueError("scanner.jpeg_quality must be 1..100")
     if cfg.scanner.resolution_dpi <= 0:
         raise ValueError("scanner.resolution_dpi must be positive")
+    # 16:9 only, and not for tidiness: 4:3 modes on this camera are zoomed to
+    # a narrower horizontal field, so preview pixels cannot be mapped onto
+    # still pixels by cropping and every crop mark would be wrong. Measured;
+    # see preview.py.
+    if cfg.preview.enable:
+        ratio = cfg.preview.width / cfg.preview.height
+        if abs(ratio - 16 / 9) > 0.01:
+            raise ValueError(
+                f"preview.width/height must be 16:9, got "
+                f"{cfg.preview.width}x{cfg.preview.height}. A 4:3 preview has a "
+                f"different field of view than the still and its crop marks "
+                f"would be wrong."
+            )

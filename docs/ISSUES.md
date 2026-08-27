@@ -43,6 +43,11 @@ and whether `NAPS2.Mdns` has moved past 1.0.1. This may already be fixed.
 **Status:** open, needs a ruler and five minutes
 **Blocks:** every claim that output is correct
 
+**Now visible**: open `/preview` and the crop marks show exactly what this
+setting claims. With the placeholder the A4 mark fills the frame precisely
+and Letter comes out 1316 px wide in a 1280 px frame, which is the placeholder
+announcing itself.
+
 `coverage_mm = [210.0, 297.0]` is a guess, not a measurement. Scans come out
 at the right *pixel dimensions* because the units contract is enforced, but
 the mapping from eSCL region to sensor area is wrong until the real area the

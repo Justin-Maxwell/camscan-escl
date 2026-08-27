@@ -126,6 +126,36 @@ Check what is being advertised with:
 avahi-browse -rt _uscan._tcp
 ```
 
+## Preview and crop marks
+
+```
+http://<host>:8090/preview
+```
+
+A live 1280×720 stream with dashed rectangles showing where A4, A5 and Letter
+will land, given your `rig.coverage_mm`. This is how you calibrate that
+setting: put a real sheet under the camera, line it up with its mark, scan,
+and see whether the scan matches. It is also how you notice that a paper size
+does not fit at all — with the default A4 coverage, the Letter mark comes out
+1316 px wide in a 1280 px frame.
+
+**The daemon holds the camera while the preview runs.** V4L2 streaming access
+is exclusive — a second process gets `Device or resource busy` — so nothing
+else can use the webcam meanwhile. A scan releases the device, captures, and
+resumes the stream automatically; a scan costs about 11 s with the preview on
+against about 5 s without, the difference being the stop and restart. To free
+the camera for Kamoso or similar, set `preview.enable = false` (or run with
+`--no-preview`) and restart.
+
+**The preview does not show everything the scan captures.** The still is
+2304×1536 (3:2) and on the C920 that is the only 3:2 mode; every streamable
+mode is 16:9 or 4:3. Measured here: 16:9 modes are the still's full width with
+a centred vertical crop, so the preview shows the middle 1296 of 1536 rows and
+**the scanner sees 120 rows more at the top and bottom**. The page says so, and
+marks that leave the frame are labelled. 4:3 modes are zoomed to a narrower
+horizontal field and cannot be mapped by cropping at all, so the daemon
+refuses to start with a 4:3 preview rather than draw crop marks that lie.
+
 ## Calibrate before trusting the output
 
 Two values decide whether a scan comes out at the right scale:
@@ -163,6 +193,8 @@ meet the dimension contract, which fabricates detail.
 | `src/camscan_escl/jobs.py` | one-at-a-time job records, 5-minute reaping |
 | `src/camscan_escl/server.py` | the `/eSCL` HTTP surface |
 | `src/camscan_escl/discovery.py` | DNS-SD advertisement, Avahi file generation |
+| `src/camscan_escl/preview.py` | live stream, camera handover, crop-mark geometry |
+| `src/camscan_escl/previewpage.py` | the positioning page and its SVG overlay |
 
 ## Testing
 

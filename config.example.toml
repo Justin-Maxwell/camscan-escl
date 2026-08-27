@@ -40,6 +40,26 @@ rotate_deg = 0              # 90 or 270 if the camera is mounted portrait
 # before trusting it:
 # command = "fswebcam -d /dev/video0 -r 2304x1536 --no-banner -S 4 --jpeg 92 %f"
 
+[preview]
+# A live preview at http://<host>:8090/preview with crop marks showing where
+# each paper size will land. The daemon holds the camera for this and hands
+# it back for a scan -- V4L2 access is exclusive, so nothing else can use the
+# camera while this is on. Turn it off to free the device for Kamoso etc.
+enable = true
+# MUST be 16:9. Measured on the C920: 16:9 modes are the still's full width
+# with a centred vertical crop, so preview pixels map onto still pixels
+# exactly. 4:3 modes are zoomed to a narrower field and cannot be mapped --
+# the daemon refuses to start with one rather than draw lying crop marks.
+width = 1280
+height = 720
+fps = 15
+
+[preview.papers]
+# name = [width_mm, height_mm]
+A4 = [210.0, 297.0]
+A5 = [148.0, 210.0]
+Letter = [215.9, 279.4]
+
 [capture.exposure]
 # Off by default: the right numbers are rig-specific, and a wrong pinned
 # exposure is worse than a variable one. Turn this on once you have measured

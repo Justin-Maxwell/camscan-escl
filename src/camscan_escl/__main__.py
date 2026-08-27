@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import config as config_mod
-from . import discovery
+from . import discovery, preview
 from .server import serve
 
 
@@ -22,6 +22,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--no-discovery", action="store_true",
                         help="do not advertise over DNS-SD")
+    parser.add_argument("--no-preview", action="store_true",
+                        help="do not hold the camera for the live preview")
     parser.add_argument("--print-avahi-service", action="store_true",
                         help="print a static Avahi service file and exit")
     args = parser.parse_args(argv)
@@ -49,7 +51,10 @@ def main(argv: list[str] | None = None) -> int:
         print(discovery.avahi_service_xml(cfg), end="")
         return 0
 
-    httpd = serve(cfg)
+    stream = preview.PreviewStream(cfg)
+    httpd = serve(cfg, stream)
+    if not args.no_preview:
+        stream.start()
     logging.info(
         "camscan-escl listening on http://%s:%d/eSCL (config: %s)",
         cfg.server.bind, cfg.server.port, cfg.source_path or "built-in defaults",
@@ -78,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if advertiser is not None:
             advertiser.stop()
+        stream.stop()
         httpd.server_close()
     return 0
 

@@ -6,12 +6,15 @@ import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import capture, escl, imaging
+from . import preview as preview_mod
 from .config import Config
 from .jobs import JobStore
+from .previewpage import page_html
 
 log = logging.getLogger(__name__)
 
 BASE = "/eSCL"
+PREVIEW = "/preview"
 
 
 class ESCLHandler(BaseHTTPRequestHandler):
@@ -21,6 +24,7 @@ class ESCLHandler(BaseHTTPRequestHandler):
     # Injected by serve().
     config: Config
     jobs: JobStore
+    preview: preview_mod.PreviewStream
 
     # -- helpers ---------------------------------------------------------
 
@@ -48,6 +52,14 @@ class ESCLHandler(BaseHTTPRequestHandler):
     # -- verbs -----------------------------------------------------------
 
     def do_GET(self) -> None:
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path in (PREVIEW, PREVIEW + "/index.html", "/"):
+            return self._preview_page()
+        if path == PREVIEW + "/stream":
+            return self._preview_stream()
+        if path == PREVIEW + "/frame":
+            return self._preview_frame()
+
         parts = self._path_parts()
         if parts is None:
             return self._send(404)
@@ -104,6 +116,45 @@ class ESCLHandler(BaseHTTPRequestHandler):
             return self._send(200)
         self._send(404)
 
+    # -- preview ---------------------------------------------------------
+
+    def _preview_page(self) -> None:
+        html = page_html(self.config, preview_mod.marks(self.config))
+        self._send(200, html.encode(), "text/html; charset=utf-8")
+
+    def _preview_frame(self) -> None:
+        frame = self.preview.latest() if self.preview.running else None
+        if frame is None:
+            return self._send(503, b"preview not running", "text/plain")
+        self._send(200, frame, "image/jpeg")
+
+    def _preview_stream(self) -> None:
+        """multipart/x-mixed-replace, which every browser renders natively."""
+        if not self.preview.running:
+            return self._send(503, b"preview not running", "text/plain")
+
+        boundary = "camscanframe"
+        self.send_response(200)
+        self.send_header(
+            "Content-Type", f"multipart/x-mixed-replace; boundary={boundary}"
+        )
+        # Frames are pushed until the client goes away, so the length is not
+        # known and keep-alive framing does not apply.
+        self.send_header("Cache-Control", "no-store")
+        self.protocol_version = "HTTP/1.0"
+        self.end_headers()
+
+        try:
+            for frame in self.preview.frames():
+                self.wfile.write(
+                    f"--{boundary}\r\nContent-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(frame)}\r\n\r\n".encode()
+                )
+                self.wfile.write(frame)
+                self.wfile.write(b"\r\n")
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the tab was closed; entirely normal
+
     # -- the scan itself -------------------------------------------------
 
     def _next_document(self, job_id: str) -> None:
@@ -114,8 +165,13 @@ class ESCLHandler(BaseHTTPRequestHandler):
 
         self.jobs.scanning = True
         try:
-            frame = capture.grab(self.config.capture)
+            # The preview owns the camera between scans, and V4L2 streaming
+            # access is exclusive: without handing it back, this grab gets
+            # EBUSY. `released` restores the stream afterwards either way.
+            with self.preview.released():
+                frame = capture.grab(self.config.capture)
             frame = imaging.orient(frame, self.config.capture.rotate_deg)
+
             jpeg = imaging.render(
                 frame,
                 job.settings,
@@ -135,10 +191,11 @@ class ESCLHandler(BaseHTTPRequestHandler):
         self._send(200, jpeg, "image/jpeg")
 
 
-def serve(config: Config) -> ThreadingHTTPServer:
+def serve(config: Config, stream: preview_mod.PreviewStream | None = None) -> ThreadingHTTPServer:
     handler = type("BoundESCLHandler", (ESCLHandler,), {
         "config": config,
         "jobs": JobStore(),
+        "preview": stream if stream is not None else preview_mod.PreviewStream(config),
     })
     httpd = ThreadingHTTPServer((config.server.bind, config.server.port), handler)
     return httpd
