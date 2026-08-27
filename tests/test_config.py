@@ -108,3 +108,29 @@ def test_apply_adjustments_ignores_unknown_keys(tmp_path):
     cfg = config_mod.apply_adjustments(config_mod.Config(),
                                        {"nonsense": 1, "coverage_mm": [200, 300]})
     assert cfg.rig.coverage_mm == (200.0, 300.0)
+
+
+def test_mismatched_coverage_aspect_is_warned_about(caplog):
+    # Silent failure mode: the units contract is still satisfied, the
+    # dimensions are still right, and every scan is stretched. Measured at
+    # 2.05x on the development rig before anyone noticed.
+    import logging
+    from dataclasses import replace
+
+    cfg = replace(config_mod.Config(),
+                  rig=replace(config_mod.Config().rig, coverage_mm=(245.8, 336.4)))
+    with caplog.at_level(logging.WARNING):
+        config_mod.validate(cfg)
+    assert any("stretched" in r.getMessage() for r in caplog.records)
+
+
+def test_matching_coverage_aspect_is_quiet(caplog):
+    import logging
+    from dataclasses import replace
+
+    # 2304x1536 is 3:2, so a 3:2 coverage is correct.
+    cfg = replace(config_mod.Config(),
+                  rig=replace(config_mod.Config().rig, coverage_mm=(300.0, 200.0)))
+    with caplog.at_level(logging.WARNING):
+        config_mod.validate(cfg)
+    assert not [r for r in caplog.records if "stretched" in r.getMessage()]

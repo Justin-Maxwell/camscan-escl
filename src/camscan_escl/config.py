@@ -292,6 +292,23 @@ def validate(cfg: Config) -> None:
         raise ValueError("capture.command must contain %f, the output path")
     if len(cfg.rig.coverage_mm) != 2 or min(cfg.rig.coverage_mm) <= 0:
         raise ValueError("rig.coverage_mm must be two positive numbers")
+    # Not fatal -- a tilted camera is a legitimate reason -- but loud, because
+    # the symptom is silent: every scan comes out stretched by this ratio and
+    # the dimensions still satisfy the units contract, so nothing else
+    # complains. Measured on this rig at 2.05x before anyone noticed.
+    frame_aspect = cfg.capture.native_width / cfg.capture.native_height
+    cov_aspect = cfg.rig.coverage_mm[0] / cfg.rig.coverage_mm[1]
+    skew = max(frame_aspect, cov_aspect) / min(frame_aspect, cov_aspect)
+    if skew > 1.02:
+        log.warning(
+            "rig.coverage_mm is %.3f wide-to-tall but the frame is %.3f: "
+            "scans will be stretched %.2fx. With the camera square-on these "
+            "must match -- a millimetre is the same number of pixels in both "
+            "directions. Suggested height for this width: %.1f mm",
+            cov_aspect, frame_aspect, skew,
+            cfg.rig.coverage_mm[0] / frame_aspect,
+        )
+
     from .imaging import ANCHORS
     if cfg.rig.anchor not in ANCHORS:
         raise ValueError(

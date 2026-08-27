@@ -93,6 +93,7 @@ class Window(Gtk.ApplicationWindow):
         self.set_default_size(1180, 760)
         self._stop = threading.Event()
         self._applying = False
+        self._frame = (2304, 1536)   # replaced by the daemon's real value
 
         root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.set_child(root)
@@ -136,6 +137,16 @@ class Window(Gtk.ApplicationWindow):
         )
         box.append(hint)
 
+        self.lock_check = Gtk.CheckButton(
+            label="Lock to frame shape")
+        self.lock_check.set_active(True)
+        self.lock_check.set_tooltip_text(
+            "With the camera square-on, a millimetre is the same number of "
+            "pixels in both directions, so the coverage must have the same "
+            "shape as the frame. Unlock only for a tilted camera.")
+        self.lock_check.connect("toggled", lambda _c: self._sync_height())
+        box.append(self.lock_check)
+
         grid = Gtk.Grid(column_spacing=8, row_spacing=6)
         self.width_spin = Gtk.SpinButton.new_with_range(20, 2000, 1)
         self.height_spin = Gtk.SpinButton.new_with_range(20, 2000, 1)
@@ -146,7 +157,12 @@ class Window(Gtk.ApplicationWindow):
             grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
             grid.attach(spin, 1, i, 1, 1)
             grid.attach(Gtk.Label(label="mm", xalign=0), 2, i, 1, 1)
+        self.width_spin.connect("value-changed", lambda _s: self._sync_height())
         box.append(grid)
+
+        self.dpi_label = Gtk.Label(xalign=0, wrap=True)
+        self.dpi_label.add_css_class("dim-label")
+        box.append(self.dpi_label)
 
         # Proportional nudges: at a fixed camera height the frame keeps its
         # aspect ratio, so scaling both together is the move that matches
@@ -227,6 +243,36 @@ class Window(Gtk.ApplicationWindow):
 
     # -- behaviour ------------------------------------------------------
 
+    def _sync_height(self) -> None:
+        """Keep the coverage the same shape as the frame, and report the dpi.
+
+        A coverage whose aspect differs from the frame's means one millimetre
+        is a different number of pixels across than down, and every scan comes
+        out stretched by that ratio. It was 2.05x on this rig before anyone
+        noticed, because the nudge buttons scaled both axes together and so
+        preserved the error perfectly.
+        """
+        if self._applying:
+            return
+        fw, fh = self._frame
+        if self.lock_check.get_active():
+            self._applying = True
+            try:
+                self.height_spin.set_value(self.width_spin.get_value() * fh / fw)
+            finally:
+                self._applying = False
+
+        w = self.width_spin.get_value()
+        h = self.height_spin.get_value() or 1
+        across, down = fw / w, fh / h
+        skew = max(across, down) / min(across, down)
+        # The honest ceiling: dots per inch actually on the sensor.
+        dpi = min(across, down) * 25.4
+        note = f"≈{dpi:.0f} dpi on the sensor"
+        if skew > 1.02:
+            note += f"  —  <b>stretched {skew:.2f}×</b>"
+        self.dpi_label.set_markup(f"<small>{note}</small>")
+
     def _enabled_order(self) -> list[str]:
         """Enabled papers, in the order the daemon will colour them."""
         return [n for n, _w, _h in KNOWN_PAPERS
@@ -262,6 +308,7 @@ class Window(Gtk.ApplicationWindow):
         data = self.client.settings()
         self._applying = True
         try:
+            self._frame = tuple(data.get("still", self._frame))
             w, h = data["coverage_mm"]
             self.width_spin.set_value(w)
             self.height_spin.set_value(h)
@@ -277,8 +324,11 @@ class Window(Gtk.ApplicationWindow):
         self._say(f"coverage {w:g} × {h:g} mm")
 
     def _on_nudge(self, _button, factor: float) -> None:
+        # Width only; _sync_height derives the rest when locked. Scaling both
+        # independently is what let a 2x stretch survive unnoticed.
         self.width_spin.set_value(self.width_spin.get_value() * factor)
-        self.height_spin.set_value(self.height_spin.get_value() * factor)
+        if not self.lock_check.get_active():
+            self.height_spin.set_value(self.height_spin.get_value() * factor)
         self._on_apply(None)
 
     def _on_apply(self, _button) -> None:
