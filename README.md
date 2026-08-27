@@ -140,6 +140,44 @@ and see whether the scan matches. It is also how you notice that a paper size
 does not fit at all — with the default A4 coverage, the Letter mark comes out
 1316 px wide in a 1280 px frame.
 
+### Crop marks inside Kamoso, or any webcam app
+
+A browser tab is a poor place to line up paper. Point the daemon at a
+[v4l2loopback](https://github.com/umlaeute/v4l2loopback) device and it
+publishes the marked-up video as a virtual webcam, so Kamoso, Cheese or a
+video call shows the crop marks burned in — live, at full frame rate.
+
+```bash
+sudo dnf install akmod-v4l2loopback
+sudo modprobe v4l2loopback video_nr=9 card_label="camscan preview" exclusive_caps=1
+```
+
+`exclusive_caps=1` matters: without it some apps do not recognise the device
+as a camera. To have it survive a reboot:
+
+```bash
+echo v4l2loopback | sudo tee /etc/modules-load.d/v4l2loopback.conf
+printf 'options v4l2loopback video_nr=9 card_label="camscan preview" exclusive_caps=1\n' | sudo tee /etc/modprobe.d/v4l2loopback.conf
+```
+
+Then point the daemon at it and restart:
+
+```toml
+[preview]
+enable = true
+loopback_device = "/dev/video9"
+```
+
+Kamoso will list "camscan preview" alongside the real camera. **Open that
+one, not the C920** — the C920 itself is held by the daemon and will report
+`Device or resource busy`. The marks are drawn by ffmpeg as part of the same
+pipeline that reads the camera, so this costs one camera read, not two;
+reading it twice is impossible anyway.
+
+During a scan the loopback goes quiet for a few seconds while the camera is
+handed over, then resumes. The device does not disappear, so the app does not
+need reopening.
+
 **The daemon holds the camera while the preview runs.** V4L2 streaming access
 is exclusive — a second process gets `Device or resource busy` — so nothing
 else can use the webcam meanwhile. A scan releases the device, captures, and

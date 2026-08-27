@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import shlex
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -111,6 +110,59 @@ def marks(cfg: Config) -> list[Mark]:
     return out
 
 
+# Distinct hues that survive being drawn over paper and over a dark desk.
+MARK_COLOURS = ("red", "lime", "cyan", "yellow", "magenta")
+
+
+def filter_chain(cfg: Config) -> str:
+    """ffmpeg filters that burn the crop marks into the video.
+
+    Done in ffmpeg rather than per-frame in Python: the marks are static for
+    a given configuration, so there is no reason to decode, draw and
+    re-encode every frame in this process.
+    """
+    parts = []
+    for i, m in enumerate(marks(cfg)):
+        colour = MARK_COLOURS[i % len(MARK_COLOURS)]
+        parts.append(
+            f"drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}"
+            f":color={colour}@0.9:t=3"
+        )
+        # Keep the label on screen when the box starts above the frame, and
+        # stagger them: marks that share a top edge would otherwise stack
+        # their labels in one illegible pile.
+        label_y = max(m.y + 6, 6) + i * 34
+        parts.append(
+            f"drawtext=text='{m.name}':x={m.x + 12}:y={label_y}"
+            f":fontsize=26:fontcolor={colour}:box=1:boxcolor=black@0.5:boxborderw=4"
+        )
+    return ",".join(parts)
+
+
+def build_command(cfg: Config) -> list[str]:
+    """The capture pipeline: camera in, marked-up video out.
+
+    Up to two outputs from one camera read -- the loopback device that
+    ordinary webcam apps open, and the MJPEG pipe this process serves over
+    HTTP. Reading the camera twice is not an option: access is exclusive.
+    """
+    size = f"{cfg.preview.width}x{cfg.preview.height}"
+    argv = [
+        "ffmpeg", "-loglevel", "error",
+        "-f", "v4l2", "-input_format", "mjpeg",
+        "-video_size", size, "-framerate", str(cfg.preview.fps),
+        "-i", cfg.capture.focus.device,
+    ]
+    vf = filter_chain(cfg)
+
+    if cfg.preview.loopback_device:
+        argv += ["-vf", vf, "-pix_fmt", "yuv420p",
+                 "-f", "v4l2", cfg.preview.loopback_device]
+
+    argv += ["-vf", vf, "-c:v", "mjpeg", "-q:v", "6", "-f", "mjpeg", "pipe:1"]
+    return argv
+
+
 class PreviewStream:
     """Owns the camera between scans, and gets out of the way for one."""
 
@@ -141,12 +193,10 @@ class PreviewStream:
     def _start_locked(self) -> bool:
         if self._running:
             return True
-        cmd = self._cfg.preview.command.replace("%d", self._cfg.capture.focus.device)
-        cmd = cmd.replace("%s", f"{self._cfg.preview.width}x{self._cfg.preview.height}")
-        cmd = cmd.replace("%r", str(self._cfg.preview.fps))
+        argv = build_command(self._cfg)
         try:
             self._proc = subprocess.Popen(
-                shlex.split(cmd),
+                argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
@@ -159,8 +209,10 @@ class PreviewStream:
         self._thread = threading.Thread(target=self._read_frames, daemon=True)
         self._thread.start()
         log.info(
-            "preview streaming %dx%d at %d fps",
+            "preview streaming %dx%d at %d fps%s",
             self._cfg.preview.width, self._cfg.preview.height, self._cfg.preview.fps,
+            f" to {self._cfg.preview.loopback_device}"
+            if self._cfg.preview.loopback_device else "",
         )
         return True
 

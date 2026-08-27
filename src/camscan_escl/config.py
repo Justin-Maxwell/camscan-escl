@@ -122,12 +122,11 @@ class PreviewConfig:
     width: int = 1280
     height: int = 720
     fps: int = 15
-    # %d device, %s WxH, %r fps. MJPG so frames need no re-encoding: they
-    # come off the camera as JPEG and are sliced straight out of the stream.
-    command: str = (
-        "ffmpeg -loglevel error -f v4l2 -input_format mjpeg -video_size %s "
-        "-framerate %r -i %d -c:v copy -f mjpeg pipe:1"
-    )
+    # A v4l2loopback device to publish the marked-up video on, so any normal
+    # webcam app -- Kamoso, Cheese, a browser -- shows the preview WITH the
+    # crop marks burned in. Empty disables it and the preview is web-only.
+    # Needs the module: see README.
+    loopback_device: str = ""
     # Paper sizes to draw, as name = [width_mm, height_mm].
     papers: tuple[tuple[str, float, float], ...] = (
         ("A4", 210.0, 297.0),

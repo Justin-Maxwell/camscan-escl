@@ -145,3 +145,36 @@ def test_stream_ends_when_the_preview_really_stops():
     stream.stop()
     with pytest.raises(StopIteration):
         next(frames)
+
+
+def test_loopback_output_is_added_only_when_configured():
+    # Publishing to a v4l2loopback device is what puts the crop marks inside
+    # Kamoso; without one the preview is web-only.
+    plain = preview.build_command(Config())
+    assert "-f" in plain and plain[-1] == "pipe:1"
+    assert not any(a.startswith("/dev/video") and a != "/dev/video0" for a in plain)
+
+    cfg = replace(Config(), preview=replace(Config().preview,
+                                            loopback_device="/dev/video9"))
+    both = preview.build_command(cfg)
+    assert "/dev/video9" in both
+    # One camera read, two outputs: reading the device twice is impossible,
+    # access being exclusive.
+    assert both.count("-i") == 1
+    assert both[-1] == "pipe:1"
+
+
+def test_marks_are_burned_in_by_ffmpeg_not_python():
+    chain = preview.filter_chain(Config())
+    assert chain.count("drawbox") == 3
+    for name in ("A4", "A5", "Letter"):
+        assert f"text='{name}'" in chain
+
+
+def test_labels_do_not_stack_on_a_shared_top_edge():
+    # Every mark starts at the coverage origin, so all three share a top edge
+    # and unstaggered labels would land in one illegible pile.
+    chain = preview.filter_chain(Config())
+    ys = [int(p.split(":y=")[1].split(":")[0])
+          for p in chain.split(",") if p.startswith("drawtext")]
+    assert len(ys) == len(set(ys)), f"labels overlap at {ys}"

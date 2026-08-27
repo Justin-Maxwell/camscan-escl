@@ -33,7 +33,8 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
             f'fill="none" stroke="{colour}" stroke-width="3" '
             f'stroke-dasharray="12 8" />'
         )
-        label_y = max(m.y + 24, 24)
+        # Staggered: marks sharing a top edge would pile their labels up.
+        label_y = max(m.y + 24, 24) + i * 30
         shapes.append(
             f'<text x="{m.x + 10}" y="{label_y}" fill="{colour}" '
             f'font-family="system-ui, sans-serif" font-size="22" '

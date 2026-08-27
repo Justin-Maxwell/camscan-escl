@@ -54,6 +54,11 @@ width = 1280
 height = 720
 fps = 15
 
+# Publish the marked-up video as a virtual webcam, so Kamoso, Cheese or a
+# video call shows the crop marks burned in. Needs the v4l2loopback module --
+# see README. Empty means the preview is web-only.
+# loopback_device = "/dev/video9"
+
 [preview.papers]
 # name = [width_mm, height_mm]
 A4 = [210.0, 297.0]
