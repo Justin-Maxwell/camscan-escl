@@ -124,66 +124,65 @@ def turn_mark(mark: Mark, rotate_deg: int, sensor: tuple[int, int]) -> Mark:
     )
 
 
-def marks(cfg: Config) -> list[Mark]:
-    """Where each paper size lands in the preview, given the rig calibration.
+def visible_still_region(cfg: Config) -> tuple[float, float, float, float]:
+    """Which part of the UPRIGHT still the preview can show, in still pixels.
 
-    A scan region starts at the origin of the coverage area, so a paper of
-    w x h mm occupies that fraction of the frame from the top left. If
-    rig.coverage_mm is wrong, these marks are wrong in exactly the same way
+    The measured relationship is about the sensor: a 16:9 preview is the
+    still's full width with a centred vertical crop. Turn the camera and that
+    band moves to the sides, because the whole frame has turned with it.
+    """
+    sw, sh = cfg.capture.native_width, cfg.capture.native_height
+    pw, ph = cfg.preview.width, cfg.preview.height
+    scale = pw / sw
+    visible_h = ph / scale
+    y0 = (sh - visible_h) / 2
+    if cfg.capture.rotate_deg % 180 == 90:
+        # Sensor rows become upright columns.
+        return (y0, 0.0, y0 + visible_h, float(sw))
+    return (0.0, y0, float(sw), y0 + visible_h)
+
+
+def marks(cfg: Config) -> list[Mark]:
+    """Where each paper size lands in the published preview.
+
+    Everything here is in UPRIGHT coordinates -- the space after
+    capture.rotate_deg, which is the space imaging.render works in and the
+    space the transposed video is published in. Computing marks in the
+    sensor's own space instead meant the anchor grid pointed at a different
+    corner than the scan used, once the camera was turned.
+
+    If rig.coverage_mm is wrong, these marks are wrong in exactly the same way
     the scans are -- which is what makes them useful for calibrating it.
     """
-    still = (cfg.capture.native_width, cfg.capture.native_height)
-    preview = (cfg.preview.width, cfg.preview.height)
+    sw, sh = cfg.capture.native_width, cfg.capture.native_height
+    if cfg.capture.rotate_deg % 180 == 90:
+        sw, sh = sh, sw
     cov_w, cov_h = cfg.rig.coverage_mm
 
-    # rig.coverage_mm describes the frame AFTER capture.rotate_deg, but the
-    # preview shows the sensor's own orientation. With the camera turned, a
-    # portrait page lies across the frame, so both the coverage and each
-    # paper have to be swapped to land the marks where the scan will crop.
-    # Two different turns, and only one of them turns the frame.
-    #
-    #   camera_rotated -- the camera is physically on its side, so
-    #       coverage_mm describes a frame the other way round from the one
-    #       the preview shows. The coverage AND the paper have to be swapped
-    #       to get back to preview coordinates.
-    #   landscape -- the page merely lies across the frame. The camera sees
-    #       the same physical area as before, so the coverage is untouched
-    #       and only the paper turns.
-    #
-    # Swapping the coverage for `landscape` made an A4 mark 2009x631 in a
-    # 1280-wide preview: nearly 3:1, an aspect no A-series paper has.
-    camera_rotated = cfg.capture.rotate_deg % 180 == 90
-    turn_paper = camera_rotated ^ cfg.preview.landscape
-    if camera_rotated:
-        cov_w, cov_h = cov_h, cov_w
-    scale = preview[0] / still[0]
-    top, bottom = visible_still_rows(still, preview)
+    x0, y0, x1, y1 = visible_still_region(cfg)
+    pw, ph = preview_size(cfg)
+    scale = pw / (x1 - x0)
 
     out = []
     for name, mm_w, mm_h in cfg.preview.papers:
-        if turn_paper:
+        # Landscape turns the page, not the frame: the camera sees the same
+        # physical area whichever way a sheet is lying on it.
+        if cfg.preview.landscape:
             mm_w, mm_h = mm_h, mm_w
-        # Paper -> still pixels, then still -> preview pixels. The anchor
-        # offset must match imaging.render exactly: a mark that disagrees
-        # with where the scan crops is worse than no mark.
         off_x, off_y = anchor_offset_mm(cfg.rig.anchor, (cov_w, cov_h),
                                         (mm_w, mm_h))
-        sx = mm_w / cov_w * still[0]
-        sy = mm_h / cov_h * still[1]
-        px = (off_x / cov_w * still[0]) * scale
-        py = (off_y / cov_h * still[1] - top) * scale
-        pw = sx * scale
-        ph = sy * scale
+        px = (off_x / cov_w * sw - x0) * scale
+        py = (off_y / cov_h * sh - y0) * scale
+        pwid = mm_w / cov_w * sw * scale
+        phei = mm_h / cov_h * sh * scale
         out.append(
             Mark(
                 name=name,
-                x=int(round(px)),
-                y=int(round(py)),
-                width=int(round(pw)),
-                height=int(round(ph)),
+                x=int(round(px)), y=int(round(py)),
+                width=int(round(pwid)), height=int(round(phei)),
                 clipped_top=py < 0,
-                clipped_bottom=py + ph > preview[1],
-                clipped_right=px + pw > preview[0],
+                clipped_bottom=py + phei > ph,
+                clipped_right=px + pwid > pw,
             )
         )
     return out
@@ -238,10 +237,7 @@ def filter_chain(cfg: Config) -> str:
     a given configuration, so there is no reason to decode, draw and
     re-encode every frame in this process.
     """
-    sensor = sensor_preview_size(cfg)
-    marked = [turn_mark(m, cfg.capture.rotate_deg, sensor)
-              for m in marks(cfg)]
-
+    marked = marks(cfg)
     parts = []
     # Turn the picture upright first, so everything after this -- the marks,
     # the loopback, the web page -- is in one coordinate space: the one the

@@ -322,3 +322,37 @@ def test_turning_a_mark_is_reversible():
                                    if _ % 2 == 0 else (sensor[1], sensor[0]))
     assert (turned.x, turned.y, turned.width, turned.height) == \
            (m.x, m.y, m.width, m.height)
+
+
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270])
+@pytest.mark.parametrize("anchor,touches", [
+    ("top-left", "left"), ("top-right", "right"),
+    ("bottom-left", "left"), ("bottom-right", "right"),
+])
+def test_anchor_means_the_same_corner_whatever_the_rotation(rotate, anchor, touches):
+    """The anchor grid is read in upright space, as imaging.render reads it.
+
+    Marks used to be computed in the sensor's own space, so with the camera
+    turned the grid pointed at a different corner than the scan cropped from
+    -- invisibly, because both looked reasonable on their own.
+    """
+    coverage = (200.0, 300.0) if rotate % 180 == 90 else (300.0, 200.0)
+    cfg = replace(
+        Config(),
+        rig=replace(Config().rig, coverage_mm=coverage, anchor=anchor),
+        capture=replace(Config().capture, rotate_deg=rotate),
+        preview=replace(Config().preview, papers=(("A5", 148.0, 210.0),)),
+    )
+    sw, sh = cfg.capture.native_width, cfg.capture.native_height
+    if rotate % 180 == 90:
+        sw, sh = sh, sw
+    x0, _y0, x1, _y1 = preview.visible_still_region(cfg)
+    scale = preview.preview_size(cfg)[0] / (x1 - x0)
+    cov_left = (0 - x0) * scale
+    cov_right = (sw - x0) * scale
+
+    mark = preview.marks(cfg)[0]
+    if touches == "left":
+        assert mark.x == pytest.approx(cov_left, abs=2)
+    else:
+        assert mark.x + mark.width == pytest.approx(cov_right, abs=2)

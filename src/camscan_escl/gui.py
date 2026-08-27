@@ -39,6 +39,10 @@ KNOWN_PAPERS = (
 # checkbox is a promise about which line in the picture it refers to.
 SWATCHES = ("#ff0000", "#00ff00", "#00ffff", "#ffff00", "#ff00ff")
 
+# Camera rotation, as offered in the dropdown. The value is what
+# capture.rotate_deg becomes; PIL and ffmpeg both count counter-clockwise.
+ROTATIONS = (("None", 0), ("−90°", 270), ("+90°", 90), ("180°", 180))
+
 ANCHORS = (
     ("top-left", "top", "top-right"),
     ("left", "center", "right"),
@@ -46,7 +50,7 @@ ANCHORS = (
 )
 
 WINDOW_W = 1180
-SIDEBAR_W = 250
+SIDEBAR_W = 246
 
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"
 
@@ -121,10 +125,15 @@ class Window(Gtk.ApplicationWindow):
         sidebar = self._sidebar()
         root.set_end_child(sidebar)
         root.set_resize_end_child(False)
-        root.set_shrink_end_child(False)
-        # Margins are outside SIDEBAR_W, so leave room for them or
-        # GTK complains it cannot honour the minimum.
-        root.set_position(WINDOW_W - SIDEBAR_W - 32)
+        # Shrinkable, because GtkPaned insists on measuring the end child one
+        # pixel below its minimum and warning about it. Letting it shrink
+        # costs nothing -- the divider can be dragged back.
+        root.set_shrink_end_child(True)
+        # SIDEBAR_W plus its margins plus the wide handle. Budgeted
+        # generously rather than exactly: being a pixel short makes GTK warn
+        # that it cannot honour the minimum, and the sidebar does not expand
+        # into any slack anyway.
+        root.set_position(WINDOW_W - (SIDEBAR_W + 28 + 16))
 
         self.connect("close-request", self._on_close)
         try:
@@ -145,7 +154,9 @@ class Window(Gtk.ApplicationWindow):
         # labels are capped in characters too -- a wrapping label's natural
         # width is otherwise whatever the text wants, which is what squeezed
         # the picture down to a thumbnail.
-        box.set_size_request(SIDEBAR_W, -1)
+        # No hard minimum. The labels are capped in characters, which sets
+        # the natural width already, and a minimum only gave GtkPaned
+        # something to measure one pixel short of and warn about.
         box.set_hexpand(False)
         # Natural height, so the controls do not sit above a slab of nothing.
         box.set_valign(Gtk.Align.START)
@@ -198,6 +209,21 @@ class Window(Gtk.ApplicationWindow):
     def _anchor_section(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(self._heading("Anchor"))
+
+        # Camera rotation sits beside the grid because the two are read
+        # together: turning the camera turns the frame, so it changes which
+        # corner every anchor names and which way a Landscape page lies.
+        rot_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        rot_row.append(Gtk.Label(label="Camera", xalign=0))
+        self.rotation = Gtk.DropDown.new_from_strings(
+            [label for label, _deg in ROTATIONS])
+        self.rotation.set_tooltip_text(
+            "Turn the picture at the head of the pipeline, for a camera "
+            "mounted on its side. Everything downstream — the marks, the "
+            "anchor, the scan — then shares one upright view.")
+        self.rotation.connect("notify::selected", self._on_rotation)
+        rot_row.append(self.rotation)
+        box.append(rot_row)
 
         self.landscape_check = Gtk.CheckButton(label="Landscape")
         self.landscape_check.set_tooltip_text(
@@ -350,6 +376,14 @@ class Window(Gtk.ApplicationWindow):
         for swatch in self.paper_swatches.values():
             swatch.queue_draw()
 
+    def _on_rotation(self, dropdown, _param) -> None:
+        idx = dropdown.get_selected()
+        if idx < len(ROTATIONS):
+            self._rotate = ROTATIONS[idx][1]
+        # A turned camera turns the frame, so the derived height flips too.
+        self._sync_height()
+        self._schedule_apply()
+
     def _on_landscape(self, _button) -> None:
         # Rotation changes which way round the frame is, so the derived
         # height must be recomputed before anything is sent.
@@ -375,6 +409,10 @@ class Window(Gtk.ApplicationWindow):
             for name, check in self.paper_checks.items():
                 check.set_active(name in active)
             self._rotate = int(data.get("rotate_deg", 0))
+            for i, (_label, deg) in enumerate(ROTATIONS):
+                if deg == self._rotate % 360:
+                    self.rotation.set_selected(i)
+                    break
             self.landscape_check.set_active(bool(data.get("landscape", False)))
             anchor = data.get("anchor", "center")
             if anchor in self.anchor_buttons:
@@ -422,6 +460,7 @@ class Window(Gtk.ApplicationWindow):
             # client asks for a wide region and nothing needs rotating --
             # which is what keeps up on the preview being up on the scan.
             "landscape": self.landscape_check.get_active(),
+            "rotate_deg": self._rotate,
         }
         self._say("applying…")
 

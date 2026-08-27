@@ -13,8 +13,8 @@ from __future__ import annotations
 import html
 
 from .config import Config
-from .preview import (Mark, preview_size, sensor_preview_size,
-                      union_rect, visible_still_rows)
+from .preview import (Mark, preview_size, union_rect,
+                      visible_still_region)
 
 # Distinct hues, readable against paper and against a dark desk alike.
 COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
@@ -23,8 +23,8 @@ COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
 def page_html(cfg: Config, marks: list[Mark]) -> str:
     w, h = preview_size(cfg)
     still = (cfg.capture.native_width, cfg.capture.native_height)
-    top, bottom = visible_still_rows(still, sensor_preview_size(cfg))
-    hidden_rows = int(round(top))
+    x0, y0, _x1, _y1 = visible_still_region(cfg)
+    hidden_rows = int(round(x0 if cfg.capture.rotate_deg % 180 == 90 else y0))
     # After a transpose the hidden band is at the sides, not the top.
     edges = ("left and at the right" if cfg.capture.rotate_deg % 180 == 90
              else "top and at the bottom")

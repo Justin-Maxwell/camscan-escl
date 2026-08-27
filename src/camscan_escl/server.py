@@ -178,11 +178,7 @@ class ESCLHandler(BaseHTTPRequestHandler):
         self._settings_get()
 
     def _preview_page(self) -> None:
-        cfg = self.config
-        turned = [preview_mod.turn_mark(m, cfg.capture.rotate_deg,
-                                        preview_mod.sensor_preview_size(cfg))
-                  for m in preview_mod.marks(cfg)]
-        html = page_html(cfg, turned)
+        html = page_html(self.config, preview_mod.marks(self.config))
         self._send(200, html.encode(), "text/html; charset=utf-8")
 
     def _preview_frame(self) -> None:
