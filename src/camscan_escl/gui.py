@@ -45,6 +45,9 @@ ANCHORS = (
     ("bottom-left", "bottom", "bottom-right"),
 )
 
+WINDOW_W = 1180
+SIDEBAR_W = 250
+
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"
 
 
@@ -90,22 +93,34 @@ class Window(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, client: Client) -> None:
         super().__init__(application=app, title="camscan-escl")
         self.client = client
-        self.set_default_size(1180, 760)
+        self.set_default_size(WINDOW_W, 760)
         self._stop = threading.Event()
         self._applying = False
         self._frame = (2304, 1536)   # replaced by the daemon's real value
 
-        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        # Paned, not Box. In a Box the sidebar took two thirds of the width
+        # and left the video a thumbnail, even with hexpand False on the
+        # sidebar and True on the picture -- GtkBox would not hand the
+        # expanding child the space. A Paned puts the divider where it is
+        # told, and lets the divider be dragged, which is what someone
+        # squinting at a crop mark actually wants.
+        root = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        root.set_wide_handle(True)
         self.set_child(root)
 
         self.picture = Gtk.Picture()
         self.picture.set_content_fit(Gtk.ContentFit.CONTAIN)
         self.picture.set_hexpand(True)
         self.picture.set_vexpand(True)
-        root.append(self.picture)
+        root.set_start_child(self.picture)
+        root.set_resize_start_child(True)
+        root.set_shrink_start_child(False)
 
-        root.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
-        root.append(self._sidebar())
+        sidebar = self._sidebar()
+        root.set_end_child(sidebar)
+        root.set_resize_end_child(False)
+        root.set_shrink_end_child(False)
+        root.set_position(WINDOW_W - SIDEBAR_W - 12)
 
         self.connect("close-request", self._on_close)
         try:
@@ -122,14 +137,18 @@ class Window(Gtk.ApplicationWindow):
         box.set_margin_bottom(14)
         box.set_margin_start(14)
         box.set_margin_end(14)
-        # Sized for the widest label it must hold, not for the window.
-        box.set_size_request(232, -1)
+        # Sized for the widest label it must hold, not for the window. The
+        # labels are capped in characters too -- a wrapping label's natural
+        # width is otherwise whatever the text wants, which is what squeezed
+        # the picture down to a thumbnail.
+        box.set_size_request(SIDEBAR_W, -1)
+        box.set_hexpand(False)
 
         head = Gtk.Label(xalign=0)
         head.set_markup("<b>Frame coverage</b>")
         box.append(head)
 
-        hint = Gtk.Label(xalign=0, wrap=True)
+        hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=30, width_chars=30)
         hint.set_markup(
             "<small>The area the camera sees, in mm. Put a real sheet under "
             "the camera and adjust until its mark sits on the edges. Every "
@@ -153,26 +172,34 @@ class Window(Gtk.ApplicationWindow):
         for i, (label, spin) in enumerate((("Width", self.width_spin),
                                            ("Height", self.height_spin))):
             spin.set_digits(1)
-            spin.set_hexpand(True)
+            # NOT hexpand. It propagates up and makes the whole sidebar
+            # greedy, which is what squeezed the picture to a thumbnail.
+            spin.set_hexpand(False)
+            spin.set_width_chars(7)
+            spin.set_max_width_chars(7)
             grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
             grid.attach(spin, 1, i, 1, 1)
             grid.attach(Gtk.Label(label="mm", xalign=0), 2, i, 1, 1)
         self.width_spin.connect("value-changed", lambda _s: self._sync_height())
         box.append(grid)
 
-        self.dpi_label = Gtk.Label(xalign=0, wrap=True)
+        self.dpi_label = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
+                                   width_chars=30)
         self.dpi_label.add_css_class("dim-label")
         box.append(self.dpi_label)
 
         # Proportional nudges: at a fixed camera height the frame keeps its
         # aspect ratio, so scaling both together is the move that matches
         # raising or lowering the camera.
-        nudge = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4,
-                        homogeneous=True)
+        nudge = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        nudge.set_halign(Gtk.Align.START)
         for label, factor in (("−5%", 0.95), ("−1%", 0.99),
                               ("+1%", 1.01), ("+5%", 1.05)):
             b = Gtk.Button(label=label)
-            b.set_size_request(44, 34)   # near square, not stretched banners
+            # halign START above stops the box stretching these; a size
+            # request is only a minimum, so it cannot make them square on its
+            # own.
+            b.set_size_request(46, 40)
             b.connect("clicked", self._on_nudge, factor)
             nudge.append(b)
         box.append(nudge)
@@ -181,7 +208,8 @@ class Window(Gtk.ApplicationWindow):
         anchor_head = Gtk.Label(xalign=0)
         anchor_head.set_markup("<b>Anchor</b>")
         box.append(anchor_head)
-        anchor_hint = Gtk.Label(xalign=0, wrap=True)
+        anchor_hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
+                                width_chars=30)
         anchor_hint.set_markup(
             "<small>Which part of the frame a scan is taken from.</small>"
         )
@@ -194,7 +222,7 @@ class Window(Gtk.ApplicationWindow):
         for r, row in enumerate(ANCHORS):
             for c, name in enumerate(row):
                 b = Gtk.ToggleButton()
-                b.set_size_request(38, 34)
+                b.set_size_request(40, 40)
                 b.set_tooltip_text(name)
                 if first is None:
                     first = b
@@ -236,7 +264,8 @@ class Window(Gtk.ApplicationWindow):
         revert.connect("clicked", lambda _b: self._load_settings())
         box.append(revert)
 
-        self.status = Gtk.Label(xalign=0, wrap=True)
+        self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
+                                width_chars=30)
         self.status.add_css_class("dim-label")
         box.append(self.status)
         return box
