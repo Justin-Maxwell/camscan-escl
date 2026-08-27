@@ -4,6 +4,9 @@ A minimal eSCL (AirScan) daemon that presents a USB webcam to scanning
 front-ends as if it were a flatbed scanner. Target consumer: NAPS2 via its
 **ESCL Driver → Manual IP** option; development harness: `sane-airscan`.
 
+Open work is tracked in [docs/ISSUES.md](docs/ISSUES.md) — there is no git
+remote, so that file is the issue tracker.
+
 The full design, and the reasoning for it, is in
 [docs/camscan-escl-spec.md](docs/camscan-escl-spec.md). Read §5 — the units
 contract — before touching the imaging path.
