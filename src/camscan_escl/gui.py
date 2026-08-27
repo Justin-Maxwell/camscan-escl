@@ -97,6 +97,7 @@ class Window(Gtk.ApplicationWindow):
         self._stop = threading.Event()
         self._applying = False
         self._frame = (2304, 1536)   # replaced by the daemon's real value
+        self._apply_timer = None
 
         # Paned, not Box. In a Box the sidebar took two thirds of the width
         # and left the video a thumbnail, even with hexpand False on the
@@ -120,7 +121,9 @@ class Window(Gtk.ApplicationWindow):
         root.set_end_child(sidebar)
         root.set_resize_end_child(False)
         root.set_shrink_end_child(False)
-        root.set_position(WINDOW_W - SIDEBAR_W - 12)
+        # Margins are outside SIDEBAR_W, so leave room for them or
+        # GTK complains it cannot honour the minimum.
+        root.set_position(WINDOW_W - SIDEBAR_W - 32)
 
         self.connect("close-request", self._on_close)
         try:
@@ -143,6 +146,8 @@ class Window(Gtk.ApplicationWindow):
         # the picture down to a thumbnail.
         box.set_size_request(SIDEBAR_W, -1)
         box.set_hexpand(False)
+        # Natural height, so the controls do not sit above a slab of nothing.
+        box.set_valign(Gtk.Align.START)
 
         # Order follows the job: choose the sizes, say where in the frame,
         # then size the frame to match.
@@ -151,16 +156,6 @@ class Window(Gtk.ApplicationWindow):
         box.append(self._anchor_section())
         box.append(Gtk.Separator())
         box.append(self._coverage_section())
-
-        box.append(Gtk.Separator())
-        self.apply_button = Gtk.Button(label="Apply")
-        self.apply_button.add_css_class("suggested-action")
-        self.apply_button.connect("clicked", self._on_apply)
-        box.append(self.apply_button)
-
-        revert = Gtk.Button(label="Reload from daemon")
-        revert.connect("clicked", lambda _b: self._load_settings())
-        box.append(revert)
 
         self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
                                 width_chars=30)
@@ -182,14 +177,6 @@ class Window(Gtk.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(self._heading("Paper sizes"))
 
-        self.landscape_check = Gtk.CheckButton(label="Landscape")
-        self.landscape_check.set_tooltip_text(
-            "Turn the crop frames through 90°, for a camera mounted across "
-            "the page. This sets capture.rotate_deg, so the scan is rotated "
-            "to match and the marks keep telling the truth.")
-        self.landscape_check.connect("toggled", self._on_landscape)
-        box.append(self.landscape_check)
-
         self.paper_checks = {}
         self.paper_swatches = {}
         for name, mm_w, mm_h in KNOWN_PAPERS:
@@ -200,7 +187,7 @@ class Window(Gtk.ApplicationWindow):
             swatch.set_draw_func(self._draw_swatch, name)
             self.paper_swatches[name] = swatch
             check = Gtk.CheckButton(label=f"{name}  {mm_w:g}×{mm_h:g}")
-            check.connect("toggled", lambda _c: self._refresh_swatches())
+            check.connect("toggled", self._on_paper_toggled)
             self.paper_checks[name] = check
             row.append(swatch)
             row.append(check)
@@ -210,7 +197,14 @@ class Window(Gtk.ApplicationWindow):
     def _anchor_section(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(self._heading("Anchor"))
-        box.append(self._note("Which part of the frame a scan is taken from."))
+
+        self.landscape_check = Gtk.CheckButton(label="Landscape")
+        self.landscape_check.set_tooltip_text(
+            "Lay the crop marks across the frame, for landscape pages. "
+            "Nothing is rotated: ask the client for a landscape page size "
+            "and eSCL carries the orientation in the region itself.")
+        self.landscape_check.connect("toggled", self._on_landscape)
+        box.append(self.landscape_check)
 
         agrid = Gtk.Grid(column_spacing=10, row_spacing=4)
         agrid.set_halign(Gtk.Align.START)
@@ -236,16 +230,6 @@ class Window(Gtk.ApplicationWindow):
         box.append(self._heading("Frame coverage"))
         box.append(self._note("Adjust to fit frame to a same-size sheet."))
 
-        self.lock_check = Gtk.CheckButton(
-            label="Lock to frame shape")
-        self.lock_check.set_active(True)
-        self.lock_check.set_tooltip_text(
-            "With the camera square-on, a millimetre is the same number of "
-            "pixels in both directions, so the coverage must have the same "
-            "shape as the frame. Unlock only for a tilted camera.")
-        self.lock_check.connect("toggled", lambda _c: self._sync_height())
-        box.append(self.lock_check)
-
         grid = Gtk.Grid(column_spacing=8, row_spacing=6)
         self.width_spin = Gtk.SpinButton.new_with_range(20, 2000, 1)
         self.height_spin = Gtk.SpinButton.new_with_range(20, 2000, 1)
@@ -260,7 +244,12 @@ class Window(Gtk.ApplicationWindow):
             grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
             grid.attach(spin, 1, i, 1, 1)
             grid.attach(Gtk.Label(label="mm", xalign=0), 2, i, 1, 1)
-        self.width_spin.connect("value-changed", lambda _s: self._sync_height())
+        # Height is derived from the width and the frame's shape, so it is
+        # shown rather than typed into.
+        self.height_spin.set_sensitive(False)
+        self.height_spin.set_tooltip_text(
+            "Derived from the width and the shape of the frame.")
+        self.width_spin.connect("value-changed", self._on_width_changed)
         box.append(grid)
 
         self.dpi_label = Gtk.Label(xalign=0, wrap=True, max_width_chars=30,
@@ -287,6 +276,10 @@ class Window(Gtk.ApplicationWindow):
 
     # -- behaviour ------------------------------------------------------
 
+    def _on_width_changed(self, _spin) -> None:
+        self._sync_height()
+        self._schedule_apply()
+
     def _sync_height(self) -> None:
         """Keep the coverage the same shape as the frame, and report the dpi.
 
@@ -301,12 +294,15 @@ class Window(Gtk.ApplicationWindow):
         fw, fh = self._frame
         if self.landscape_check.get_active():
             fw, fh = fh, fw
-        if self.lock_check.get_active():
-            self._applying = True
-            try:
-                self.height_spin.set_value(self.width_spin.get_value() * fh / fw)
-            finally:
-                self._applying = False
+        # Always locked. With the camera square-on a millimetre is the same
+        # number of pixels in both directions, so a coverage of a different
+        # shape to the frame just means every scan comes out stretched --
+        # 2.05x on this rig before anyone noticed. Not a choice worth having.
+        self._applying = True
+        try:
+            self.height_spin.set_value(self.width_spin.get_value() * fh / fw)
+        finally:
+            self._applying = False
 
         w = self.width_spin.get_value()
         h = self.height_spin.get_value() or 1
@@ -337,6 +333,10 @@ class Window(Gtk.ApplicationWindow):
         cr.rectangle(0, 0, width, height)
         cr.fill()
 
+    def _on_paper_toggled(self, _check) -> None:
+        self._refresh_swatches()
+        self._schedule_apply()
+
     def _refresh_swatches(self) -> None:
         # Colours are assigned by position among the enabled sizes, so
         # ticking one box changes the colour of the ones after it.
@@ -344,15 +344,14 @@ class Window(Gtk.ApplicationWindow):
             swatch.queue_draw()
 
     def _on_landscape(self, _button) -> None:
-        # Rotation changes which way round the frame is, so the locked
+        # Rotation changes which way round the frame is, so the derived
         # height must be recomputed before anything is sent.
         self._sync_height()
-        if not self._applying:
-            self._on_apply(None)
+        self._schedule_apply()
 
     def _on_anchor(self, button, name: str) -> None:
-        if button.get_active() and not self._applying:
-            self._on_apply(None)
+        if button.get_active():
+            self._schedule_apply()
 
     def _say(self, text: str) -> None:
         self.status.set_markup(f"<small>{GLib.markup_escape_text(text)}</small>")
@@ -368,8 +367,7 @@ class Window(Gtk.ApplicationWindow):
             active = {p[0] for p in data["papers"]}
             for name, check in self.paper_checks.items():
                 check.set_active(name in active)
-            self.landscape_check.set_active(
-                int(data.get("rotate_deg", 0)) % 180 == 90)
+            self.landscape_check.set_active(bool(data.get("landscape", False)))
             anchor = data.get("anchor", "center")
             if anchor in self.anchor_buttons:
                 self.anchor_buttons[anchor].set_active(True)
@@ -379,12 +377,26 @@ class Window(Gtk.ApplicationWindow):
         self._say(f"coverage {w:g} × {h:g} mm")
 
     def _on_nudge(self, _button, factor: float) -> None:
-        # Width only; _sync_height derives the rest when locked. Scaling both
+        # Width only; _sync_height derives the height. Scaling both
         # independently is what let a 2x stretch survive unnoticed.
         self.width_spin.set_value(self.width_spin.get_value() * factor)
-        if not self.lock_check.get_active():
-            self.height_spin.set_value(self.height_spin.get_value() * factor)
+
+    def _schedule_apply(self) -> None:
+        """Apply shortly after the last change, not on every keystroke.
+
+        Each change restarts the ffmpeg pipeline, so holding a nudge button
+        would otherwise queue a restart per click.
+        """
+        if self._applying:
+            return
+        if self._apply_timer:
+            GLib.source_remove(self._apply_timer)
+        self._apply_timer = GLib.timeout_add(350, self._apply_now)
+
+    def _apply_now(self) -> bool:
+        self._apply_timer = None
         self._on_apply(None)
+        return False
 
     def _on_apply(self, _button) -> None:
         if self._applying:
@@ -396,9 +408,12 @@ class Window(Gtk.ApplicationWindow):
                        if self.paper_checks[p[0]].get_active()],
             "anchor": next((n for n, b in self.anchor_buttons.items()
                             if b.get_active()), "center"),
-            "rotate_deg": 90 if self.landscape_check.get_active() else 0,
+            # Marks only. NAPS2 can define a landscape page size, and eSCL
+            # carries orientation in the region's own dimensions, so the
+            # client asks for a wide region and nothing needs rotating --
+            # which is what keeps up on the preview being up on the scan.
+            "landscape": self.landscape_check.get_active(),
         }
-        self.apply_button.set_sensitive(False)
         self._say("applying…")
 
         def work():
@@ -409,7 +424,6 @@ class Window(Gtk.ApplicationWindow):
                 GLib.idle_add(self._say, f"rejected: {exc.read().decode()[:120]}")
             except Exception as exc:  # noqa: BLE001
                 GLib.idle_add(self._say, f"failed: {exc}")
-            GLib.idle_add(self.apply_button.set_sensitive, True)
 
         threading.Thread(target=work, daemon=True).start()
 

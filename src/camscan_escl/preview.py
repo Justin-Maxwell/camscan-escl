@@ -91,7 +91,9 @@ def marks(cfg: Config) -> list[Mark]:
     # preview shows the sensor's own orientation. With the camera turned, a
     # portrait page lies across the frame, so both the coverage and each
     # paper have to be swapped to land the marks where the scan will crop.
-    rotated = cfg.capture.rotate_deg % 180 == 90
+    # Either the camera is physically turned (rotate_deg), or the marks are
+    # simply laid across the frame for landscape pages (preview.landscape).
+    rotated = (cfg.capture.rotate_deg % 180 == 90) ^ cfg.preview.landscape
     if rotated:
         cov_w, cov_h = cov_h, cov_w
     scale = preview[0] / still[0]

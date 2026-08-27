@@ -99,3 +99,16 @@ def test_capabilities_carries_a_uuid_matching_the_advert():
 def test_status_is_well_formed():
     root = ET.fromstring(escl.status_xml("Idle"))
     assert root.find("pwg:State", escl.NS).text == "Idle"
+
+
+def test_platen_admits_landscape_as_well_as_portrait():
+    # eSCL has no orientation flag: a landscape scan IS a region wider than
+    # it is tall. NAPS2 can define a custom page size, so a landscape A4 asks
+    # for 3508 units of width -- and against a declared 2550 the client
+    # clamps and returns 1275px where the contract says 1754. Measured.
+    root = ET.fromstring(escl.capabilities_xml("m", "s", 150))
+    max_w = int(root.find(".//scan:MaxWidth", escl.NS).text)
+    max_h = int(root.find(".//scan:MaxHeight", escl.NS).text)
+    longest = max(*escl.A4, *escl.LETTER)
+    assert max_w >= longest, "cannot request a landscape page"
+    assert max_h >= longest

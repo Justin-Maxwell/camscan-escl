@@ -142,6 +142,11 @@ class PreviewConfig:
     # Everything outside the union of the paper sizes is dead space that no
     # scan can ever reach, so it is dimmed rather than left looking usable.
     outside_colour: str = "gray@0.55"
+    # Draw the crop marks across the frame. Purely about the marks: eSCL
+    # carries orientation in the requested region's own dimensions -- a
+    # landscape scan is one wider than it is tall -- so a client asking for
+    # a landscape page needs no rotation from us, and up stays up.
+    landscape: bool = False
     # Paper sizes to draw, as name = [width_mm, height_mm].
     papers: tuple[tuple[str, float, float], ...] = (
         ("A4", 210.0, 297.0),
@@ -256,6 +261,10 @@ def apply_adjustments(cfg: Config, data: dict) -> Config:
     coverage = data.get("coverage_mm")
     papers = data.get("papers")
     anchor = data.get("anchor")
+    landscape = data.get("landscape")
+    if landscape is not None:
+        cfg = replace(cfg, preview=replace(cfg.preview,
+                                           landscape=bool(landscape)))
     rotate = data.get("rotate_deg")
     if rotate is not None:
         cfg = replace(cfg, capture=replace(cfg.capture,
@@ -284,6 +293,7 @@ def save_adjustments(cfg: Config, path: Path | None = None) -> Path:
         "coverage_mm": list(cfg.rig.coverage_mm),
         "anchor": cfg.rig.anchor,
         "rotate_deg": cfg.capture.rotate_deg,
+        "landscape": cfg.preview.landscape,
         "papers": [list(p) for p in cfg.preview.papers],
     }
     tmp = path.with_suffix(".json.tmp")

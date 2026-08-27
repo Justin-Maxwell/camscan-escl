@@ -344,6 +344,15 @@ real camera and a real front-end on this host:
    packet capture showed a clean `200 OK` and the whole document read, which
    is how it was found. The same UUID goes in the advert's TXT record.
 
+5. **§6's platen is too small for a landscape page.** eSCL has no
+   orientation field at all — verified against NAPS2's `EsclScanSettings`,
+   which carries only Width, Height, offsets, format, resolution and colour.
+   A landscape scan simply *is* a region wider than it is tall, and NAPS2 can
+   define one as a custom page size. Against the declared 2550-unit width a
+   landscape A4 was clamped to 1275px where the contract says 1754 — the same
+   silent truncation as erratum 3. The platen now declares the longest side
+   of any supported paper in both axes.
+
 ## Known-unverified
 
 **The capabilities XML has not been validated against the Mopria eSCL Scan

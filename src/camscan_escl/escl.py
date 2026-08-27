@@ -30,7 +30,14 @@ LETTER = (2550, 3300)
 # Letter request to 2480 units -- a 1240px-wide page where 1275 was
 # contracted. Regions past the camera's real coverage pad white anyway, so
 # declaring the union costs nothing and honours the contract for both.
-MAX_REGION = (max(A4[0], LETTER[0]), max(A4[1], LETTER[1]))
+#
+# Both orientations, not just portrait. NAPS2 can define a custom page size,
+# and a landscape A4 asks for 3508 units of width -- against a declared 2550
+# the client clamps and returns 1275px where the contract says 1754, silently.
+# Measured. eSCL has no orientation flag at all: a landscape scan IS a region
+# wider than it is tall, so the platen has to admit one.
+_SIDES = (*A4, *LETTER)
+MAX_REGION = (max(_SIDES), max(_SIDES))
 
 COLOR_MODES = ("RGB24", "Grayscale8")
 
