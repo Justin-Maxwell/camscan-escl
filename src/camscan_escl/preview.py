@@ -75,6 +75,55 @@ def visible_still_rows(still: tuple[int, int], preview: tuple[int, int]) -> tupl
     return (top, top + visible_rows)
 
 
+# rotate_deg counts counter-clockwise, as PIL's rotate does. ffmpeg's
+# transpose calls the same turn "cclock".
+TRANSPOSE = {90: "transpose=cclock", 180: "transpose=clock,transpose=clock",
+             270: "transpose=clock"}
+
+
+def sensor_preview_size(cfg: Config) -> tuple[int, int]:
+    """The preview frame as it comes off the sensor, before any transpose."""
+    return (cfg.preview.width, cfg.preview.height)
+
+
+def preview_size(cfg: Config) -> tuple[int, int]:
+    """The preview frame as it is published, after the transpose.
+
+    A turned camera is turned back at the head of the pipeline, so what the
+    preview shows -- and what any app opening the loopback shows -- is the
+    upright frame the scanner works from.
+    """
+    w, h = sensor_preview_size(cfg)
+    return (h, w) if cfg.capture.rotate_deg % 180 == 90 else (w, h)
+
+
+def turn_mark(mark: Mark, rotate_deg: int, sensor: tuple[int, int]) -> Mark:
+    """Carry a mark from sensor coordinates into transposed ones.
+
+    Marks are computed against the sensor's own framing, because that is what
+    the measured 16:9-crop relationship describes. The video is then turned
+    upright, so the rectangles have to make the same journey.
+    """
+    deg = rotate_deg % 360
+    if deg == 0:
+        return mark
+    sw, sh = sensor
+    x, y, w, h = mark.x, mark.y, mark.width, mark.height
+    if deg == 90:      # counter-clockwise
+        x, y, w, h = y, sw - x - w, h, w
+    elif deg == 180:
+        x, y = sw - x - w, sh - y - h
+    else:              # 270, clockwise
+        x, y, w, h = sh - y - h, x, h, w
+    pw, ph = (sh, sw) if deg % 180 == 90 else (sw, sh)
+    return Mark(
+        name=mark.name, x=x, y=y, width=w, height=h,
+        clipped_top=y < 0,
+        clipped_bottom=y + h > ph,
+        clipped_right=x + w > pw,
+    )
+
+
 def marks(cfg: Config) -> list[Mark]:
     """Where each paper size lands in the preview, given the rig calibration.
 
@@ -168,7 +217,7 @@ def _outside_bands(cfg: Config, rect: tuple[int, int, int, int], colour: str) ->
     is the normal case when the capture area is larger than the preview.
     """
     x, y, w, h = rect
-    pw, ph = cfg.preview.width, cfg.preview.height
+    pw, ph = preview_size(cfg)
     candidates = [
         (0, 0, pw, y),                              # above
         (0, y + h, pw, ph - (y + h)),               # below
@@ -189,10 +238,20 @@ def filter_chain(cfg: Config) -> str:
     a given configuration, so there is no reason to decode, draw and
     re-encode every frame in this process.
     """
-    marked = marks(cfg)
-    parts = []
+    sensor = sensor_preview_size(cfg)
+    marked = [turn_mark(m, cfg.capture.rotate_deg, sensor)
+              for m in marks(cfg)]
 
-    # Dead zone first, so the marks and labels draw on top of it.
+    parts = []
+    # Turn the picture upright first, so everything after this -- the marks,
+    # the loopback, the web page -- is in one coordinate space: the one the
+    # scanner works in. Compensating for a turned camera downstream instead
+    # is what produced three separate orientation bugs.
+    turn = TRANSPOSE.get(cfg.capture.rotate_deg % 360)
+    if turn:
+        parts.append(turn)
+
+    # Dead zone next, so the marks and labels draw on top of it.
     rect = union_rect(marked)
     parts += _outside_bands(cfg, rect, cfg.preview.outside_colour)
     ux, uy, uw, uh = rect
@@ -224,6 +283,8 @@ def build_command(cfg: Config) -> list[str]:
     ordinary webcam apps open, and the MJPEG pipe this process serves over
     HTTP. Reading the camera twice is not an option: access is exclusive.
     """
+    # Requested from the camera in its own orientation; the transpose in the
+    # filter chain is what turns the published frame upright.
     size = f"{cfg.preview.width}x{cfg.preview.height}"
     argv = [
         "ffmpeg", "-loglevel", "error",

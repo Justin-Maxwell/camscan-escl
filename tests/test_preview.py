@@ -280,3 +280,45 @@ def test_landscape_turns_the_paper_not_the_frame():
     assert turned.width > turned.height
     assert turned.width == pytest.approx(portrait.height, rel=0.01)
     assert turned.height == pytest.approx(portrait.width, rel=0.01)
+
+
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270])
+def test_rotation_happens_at_the_head_of_the_pipeline(rotate):
+    # The turn belongs before anything else reads the frame, so preview,
+    # loopback, marks and scan all share one upright coordinate space.
+    # Compensating downstream instead produced three separate orientation
+    # bugs, each of which looked plausible in isolation.
+    cfg = replace(Config(),
+                  rig=replace(Config().rig,
+                              coverage_mm=(200.0, 300.0) if rotate % 180 == 90
+                              else (300.0, 200.0)),
+                  capture=replace(Config().capture, rotate_deg=rotate))
+    chain = preview.filter_chain(cfg)
+    if rotate == 0:
+        assert "transpose" not in chain
+    else:
+        assert chain.startswith("transpose"), \
+            "the turn must come before the marks are drawn"
+
+
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270])
+def test_published_frame_is_turned_with_the_camera(rotate):
+    cfg = replace(Config(), capture=replace(Config().capture, rotate_deg=rotate))
+    w, h = preview.preview_size(cfg)
+    if rotate % 180 == 90:
+        assert (w, h) == (cfg.preview.height, cfg.preview.width)
+    else:
+        assert (w, h) == (cfg.preview.width, cfg.preview.height)
+
+
+def test_turning_a_mark_is_reversible():
+    # Four quarter turns is the identity; anything else means the transform
+    # loses geometry rather than moving it.
+    m = preview.Mark("A4", 100, 50, 300, 400, False, False, False)
+    sensor = (1280, 720)
+    turned = m
+    for _ in range(4):
+        turned = preview.turn_mark(turned, 90, sensor
+                                   if _ % 2 == 0 else (sensor[1], sensor[0]))
+    assert (turned.x, turned.y, turned.width, turned.height) == \
+           (m.x, m.y, m.width, m.height)

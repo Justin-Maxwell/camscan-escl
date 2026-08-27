@@ -134,7 +134,8 @@ class ESCLHandler(BaseHTTPRequestHandler):
             "rotate_deg": cfg.capture.rotate_deg,
             "landscape": cfg.preview.landscape,
             "papers": [list(p) for p in cfg.preview.papers],
-            "preview": {"width": cfg.preview.width, "height": cfg.preview.height},
+            "preview": dict(zip(("width", "height"),
+                                preview_mod.preview_size(cfg))),
             "still": [cfg.capture.native_width, cfg.capture.native_height],
         }).encode()
         self._send(200, body, "application/json")
@@ -177,7 +178,11 @@ class ESCLHandler(BaseHTTPRequestHandler):
         self._settings_get()
 
     def _preview_page(self) -> None:
-        html = page_html(self.config, preview_mod.marks(self.config))
+        cfg = self.config
+        turned = [preview_mod.turn_mark(m, cfg.capture.rotate_deg,
+                                        preview_mod.sensor_preview_size(cfg))
+                  for m in preview_mod.marks(cfg)]
+        html = page_html(cfg, turned)
         self._send(200, html.encode(), "text/html; charset=utf-8")
 
     def _preview_frame(self) -> None:

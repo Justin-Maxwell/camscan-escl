@@ -13,17 +13,21 @@ from __future__ import annotations
 import html
 
 from .config import Config
-from .preview import Mark, union_rect, visible_still_rows
+from .preview import (Mark, preview_size, sensor_preview_size,
+                      union_rect, visible_still_rows)
 
 # Distinct hues, readable against paper and against a dark desk alike.
 COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
 
 
 def page_html(cfg: Config, marks: list[Mark]) -> str:
-    w, h = cfg.preview.width, cfg.preview.height
+    w, h = preview_size(cfg)
     still = (cfg.capture.native_width, cfg.capture.native_height)
-    top, bottom = visible_still_rows(still, (w, h))
+    top, bottom = visible_still_rows(still, sensor_preview_size(cfg))
     hidden_rows = int(round(top))
+    # After a transpose the hidden band is at the sides, not the top.
+    edges = ("left and at the right" if cfg.capture.rotate_deg % 180 == 90
+             else "top and at the bottom")
 
     # The dead zone: everything outside the union of the paper sizes can
     # never appear in any scan. One path with evenodd, which SVG can express
@@ -114,7 +118,7 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
 </p>
 <p class="note">
   The preview is 16:9 and the scan is 3:2, so <strong>the scanner sees
-  {hidden_rows} pixel rows more than this, at the top and at the bottom</strong>.
+  {hidden_rows} pixel rows more than this, at the {edges}</strong>.
   A mark can leave the preview and still be captured.
 </p>
 """
