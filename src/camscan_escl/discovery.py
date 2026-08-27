@@ -73,7 +73,7 @@ class Advertiser:
 
     def start(self) -> bool:
         try:
-            from zeroconf import ServiceInfo, Zeroconf
+            from zeroconf import IPVersion, ServiceInfo, Zeroconf
         except ImportError:
             log.warning(
                 "zeroconf is not installed, so the scanner will not appear in a "
@@ -96,7 +96,13 @@ class Advertiser:
         )
 
         try:
-            self._zc = Zeroconf()
+            # IPVersion.All, not the default. zeroconf defaults to V4Only, so
+            # it neither listens on ff02::fb nor answers there. NAPS2 browses
+            # over both families -- a packet capture shows it querying
+            # _uscan._tcp from a link-local address every two seconds, and
+            # nothing on this host ever answering IPv6. Responding on both
+            # costs nothing and removes the only asymmetry the capture shows.
+            self._zc = Zeroconf(ip_version=IPVersion.All)
             self._zc.register_service(self._info, allow_name_change=True)
         except Exception as exc:
             log.warning("could not advertise over DNS-SD: %s", exc)
