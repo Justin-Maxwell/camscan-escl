@@ -12,6 +12,11 @@ bind = "127.0.0.1"          # widen only if scanning from another host
 # Manual IP. Needs the optional `zeroconf` package; without it the daemon
 # still runs and Manual IP still works.
 enable = true
+# The DNS-SD instance name. Keep it plain: NAPS2's search ignored an advert
+# named "camscan-escl (Logitech C920) [camscan-0001]" even though every TXT
+# key it requires was present. The name a front-end displays comes from
+# scanner.make_and_model, not from this.
+name = "camscan"
 
 [scanner]
 make_and_model = "camscan-escl (Logitech C920)"

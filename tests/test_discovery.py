@@ -54,3 +54,12 @@ def test_avahi_service_file_is_well_formed_xml():
     assert service.find("port").text == "9000"
     records = {r.text.split("=", 1)[0] for r in service.findall("txt-record")}
     assert {"rs", "ty", "pdl", "cs", "vers"} <= records
+
+
+def test_advertised_instance_name_is_plain():
+    # NAPS2's search ignored an advert whose instance name carried spaces,
+    # parentheses and brackets, despite every required TXT key being present.
+    # All are legal in DNS-SD; not every client's parser agrees.
+    name = Config().discovery.name
+    assert name
+    assert not (set(name) & set(" ()[]"))

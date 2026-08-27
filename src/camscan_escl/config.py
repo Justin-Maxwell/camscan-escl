@@ -85,6 +85,13 @@ class DiscoveryConfig:
     # Requires the optional `zeroconf` dependency; without it the daemon runs
     # and logs a warning.
     enable: bool = True
+    # The DNS-SD instance name, kept separate from scanner.make_and_model.
+    # The obvious instance name -- "camscan-escl (Logitech C920)
+    # [camscan-0001]" -- carries spaces, parentheses and brackets, all legal
+    # in DNS-SD and all a plausible thing for a client's own mDNS parser to
+    # mishandle. The display name a front-end shows comes from the TXT `ty`
+    # record and from MakeAndModel, so keeping this plain costs nothing.
+    name: str = "camscan"
 
 
 @dataclass(frozen=True)

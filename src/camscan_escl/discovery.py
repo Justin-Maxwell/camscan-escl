@@ -84,7 +84,7 @@ class Advertiser:
 
         cfg = self._cfg
         address = _advertised_host(cfg)
-        instance = f"{cfg.scanner.make_and_model} [{cfg.scanner.serial}]"
+        instance = cfg.discovery.name
 
         self._info = ServiceInfo(
             SERVICE_TYPE,
@@ -138,7 +138,7 @@ def avahi_service_xml(cfg: Config) -> str:
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <!-- camscan-escl: install as /etc/avahi/services/camscan-escl.service -->
 <service-group>
-  <name replace-wildcards="yes">{_esc(cfg.scanner.make_and_model)} on %h</name>
+  <name>{_esc(cfg.discovery.name)}</name>
   <service>
     <type>_uscan._tcp</type>
     <port>{cfg.server.port}</port>
