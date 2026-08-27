@@ -103,6 +103,12 @@ class Window(Gtk.ApplicationWindow):
         self._frame = (2304, 1536)   # replaced by the daemon's real value
         self._apply_timer = None
         self._rotate = 0             # capture.rotate_deg, from the daemon
+        # Handlers fire while the sidebar is still being built -- a DropDown
+        # emits notify::selected as its model is set -- and the sections are
+        # built in reading order, so the anchor's controls exist before the
+        # coverage widgets they want to update. Nothing acts until the whole
+        # sidebar is assembled.
+        self._ready = False
 
         # Paned, not Box. In a Box the sidebar took two thirds of the width
         # and left the video a thumbnail, even with hexpand False on the
@@ -173,6 +179,7 @@ class Window(Gtk.ApplicationWindow):
                                 width_chars=30)
         self.status.add_css_class("dim-label")
         box.append(self.status)
+        self._ready = True
         return box
 
     def _heading(self, text: str) -> Gtk.Label:
@@ -316,7 +323,7 @@ class Window(Gtk.ApplicationWindow):
         noticed, because the nudge buttons scaled both axes together and so
         preserved the error perfectly.
         """
-        if self._applying:
+        if self._applying or not self._ready:
             return
         fw, fh = self._frame
         # NOT swapped for the Landscape tick. That only lays the marks across
@@ -433,7 +440,7 @@ class Window(Gtk.ApplicationWindow):
         Each change restarts the ffmpeg pipeline, so holding a nudge button
         would otherwise queue a restart per click.
         """
-        if self._applying:
+        if self._applying or not self._ready:
             return
         if self._apply_timer:
             GLib.source_remove(self._apply_timer)
@@ -441,7 +448,6 @@ class Window(Gtk.ApplicationWindow):
 
     def _apply_now(self) -> bool:
         self._apply_timer = None
-        self._rotate = 0             # capture.rotate_deg, from the daemon
         self._on_apply(None)
         return False
 
