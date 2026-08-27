@@ -127,6 +127,9 @@ class PreviewConfig:
     # crop marks burned in. Empty disables it and the preview is web-only.
     # Needs the module: see README.
     loopback_device: str = ""
+    # Everything outside the union of the paper sizes is dead space that no
+    # scan can ever reach, so it is dimmed rather than left looking usable.
+    outside_colour: str = "gray@0.55"
     # Paper sizes to draw, as name = [width_mm, height_mm].
     papers: tuple[tuple[str, float, float], ...] = (
         ("A4", 210.0, 297.0),

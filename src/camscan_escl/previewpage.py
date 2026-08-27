@@ -13,7 +13,7 @@ from __future__ import annotations
 import html
 
 from .config import Config
-from .preview import Mark, visible_still_rows
+from .preview import Mark, union_rect, visible_still_rows
 
 # Distinct hues, readable against paper and against a dark desk alike.
 COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
@@ -25,7 +25,17 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
     top, bottom = visible_still_rows(still, (w, h))
     hidden_rows = int(round(top))
 
-    shapes, legend = [], []
+    # The dead zone: everything outside the union of the paper sizes can
+    # never appear in any scan. One path with evenodd, which SVG can express
+    # and drawbox cannot.
+    ux, uy, uw, uh = union_rect(marks)
+    shapes = [
+        f'<path d="M0,0 H{w} V{h} H0 Z M{ux},{uy} h{uw} v{uh} h{-uw} Z" '
+        f'fill="#000" fill-opacity="0.55" fill-rule="evenodd" />',
+        f'<rect x="{ux}" y="{uy}" width="{uw}" height="{uh}" fill="none" '
+        f'stroke="#fff" stroke-opacity="0.85" stroke-width="2" />',
+    ]
+    legend = []
     for i, m in enumerate(marks):
         colour = COLOURS[i % len(COLOURS)]
         shapes.append(

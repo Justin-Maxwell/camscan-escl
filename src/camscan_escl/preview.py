@@ -114,6 +114,44 @@ def marks(cfg: Config) -> list[Mark]:
 MARK_COLOURS = ("red", "lime", "cyan", "yellow", "magenta")
 
 
+def union_rect(marked: list[Mark]) -> tuple[int, int, int, int]:
+    """The bounding box of every configured paper size, in preview pixels.
+
+    This is what the scanner can actually be asked for, so it is the frame
+    that matters: anything outside it will never appear in any scan, whatever
+    paper is chosen.
+    """
+    if not marked:
+        return (0, 0, 0, 0)
+    left = min(m.x for m in marked)
+    top = min(m.y for m in marked)
+    right = max(m.x + m.width for m in marked)
+    bottom = max(m.y + m.height for m in marked)
+    return (left, top, right - left, bottom - top)
+
+
+def _outside_bands(cfg: Config, rect: tuple[int, int, int, int], colour: str) -> list[str]:
+    """Filled boxes covering everything outside `rect`, to dim the dead zone.
+
+    Four bands rather than one shape with a hole, because drawbox has no
+    concept of a hole. Bands that fall entirely off-screen are skipped, which
+    is the normal case when the capture area is larger than the preview.
+    """
+    x, y, w, h = rect
+    pw, ph = cfg.preview.width, cfg.preview.height
+    candidates = [
+        (0, 0, pw, y),                              # above
+        (0, y + h, pw, ph - (y + h)),               # below
+        (0, max(y, 0), x, min(h, ph)),              # left
+        (x + w, max(y, 0), pw - (x + w), min(h, ph)),  # right
+    ]
+    return [
+        f"drawbox=x={bx}:y={by}:w={bw}:h={bh}:color={colour}:t=fill"
+        for bx, by, bw, bh in candidates
+        if bw > 0 and bh > 0 and bx < pw and by < ph
+    ]
+
+
 def filter_chain(cfg: Config) -> str:
     """ffmpeg filters that burn the crop marks into the video.
 
@@ -121,8 +159,18 @@ def filter_chain(cfg: Config) -> str:
     a given configuration, so there is no reason to decode, draw and
     re-encode every frame in this process.
     """
+    marked = marks(cfg)
     parts = []
-    for i, m in enumerate(marks(cfg)):
+
+    # Dead zone first, so the marks and labels draw on top of it.
+    rect = union_rect(marked)
+    parts += _outside_bands(cfg, rect, cfg.preview.outside_colour)
+    ux, uy, uw, uh = rect
+    parts.append(
+        f"drawbox=x={ux}:y={uy}:w={uw}:h={uh}:color=white@0.85:t=2"
+    )
+
+    for i, m in enumerate(marked):
         colour = MARK_COLOURS[i % len(MARK_COLOURS)]
         parts.append(
             f"drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}"

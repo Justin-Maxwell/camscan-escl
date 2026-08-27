@@ -166,7 +166,11 @@ def test_loopback_output_is_added_only_when_configured():
 
 def test_marks_are_burned_in_by_ffmpeg_not_python():
     chain = preview.filter_chain(Config())
-    assert chain.count("drawbox") == 3
+    # One outlined box per paper, over and above the union frame and the
+    # filled dimming bands.
+    paper_boxes = [p for p in chain.split(",")
+                   if p.startswith("drawbox") and "t=3" in p]
+    assert len(paper_boxes) == 3
     for name in ("A4", "A5", "Letter"):
         assert f"text='{name}'" in chain
 
@@ -178,3 +182,32 @@ def test_labels_do_not_stack_on_a_shared_top_edge():
     ys = [int(p.split(":y=")[1].split(":")[0])
           for p in chain.split(",") if p.startswith("drawtext")]
     assert len(ys) == len(set(ys)), f"labels overlap at {ys}"
+
+
+def test_union_is_the_bounding_box_of_every_paper():
+    m = preview.marks(Config())
+    x, y, w, h = preview.union_rect(m)
+    assert (x, y) == (0, -67)
+    assert w == max(k.x + k.width for k in m)
+    assert h == max(k.y + k.height for k in m) - y
+
+
+def test_dead_zone_is_dimmed_outside_the_union():
+    # Everything outside the union can never appear in any scan, whatever
+    # paper is picked, so it should not look usable.
+    cfg = replace(Config(), rig=replace(Config().rig, coverage_mm=(420.0, 594.0)))
+    chain = preview.filter_chain(cfg)
+    fills = [p for p in chain.split(",") if "t=fill" in p]
+    assert fills, "no dimming bands drawn"
+    assert all("gray" in f for f in fills)
+
+
+def test_no_bands_are_drawn_off_screen():
+    cfg = replace(Config(), rig=replace(Config().rig, coverage_mm=(420.0, 594.0)))
+    chain = preview.filter_chain(cfg)
+    for part in chain.split(","):
+        if "t=fill" not in part:
+            continue
+        w = int(part.split(":w=")[1].split(":")[0])
+        h = int(part.split(":h=")[1].split(":")[0])
+        assert w > 0 and h > 0, part
