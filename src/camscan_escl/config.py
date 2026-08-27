@@ -147,6 +147,11 @@ class PreviewConfig:
     # landscape scan is one wider than it is tall -- so a client asking for
     # a landscape page needs no rotation from us, and up stays up.
     landscape: bool = False
+    # Shrink the picture when a crop mark would fall entirely outside it.
+    # A mark bigger than the frame otherwise draws nothing, exactly when it
+    # most needs to be seen.
+    fit_marks: bool = True
+    pad_colour: str = "#101014"
     # Paper sizes to draw, as name = [width_mm, height_mm].
     papers: tuple[tuple[str, float, float], ...] = (
         ("A4", 210.0, 297.0),

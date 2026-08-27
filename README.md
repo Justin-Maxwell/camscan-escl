@@ -161,6 +161,11 @@ buttons change the width; the height follows, because it is fixed by the
 shape of the frame — a coverage of a different shape means every scan comes
 out stretched, which is not a choice worth offering.
 
+**When a paper does not fit**, the picture shrinks into the middle and the
+mark is drawn on the padding around it. Otherwise a size larger than the
+coverage has all four edges off-screen and draws nothing, which reads as "not
+enabled" rather than "does not fit". Turn it off with `fit_marks = false`.
+
 **Landscape** lays the marks across the frame. Nothing is rotated: eSCL has
 no orientation field, a landscape scan simply *is* a region wider than it is
 tall, and NAPS2 can define one as a custom page size. Tick it and ask the

@@ -54,6 +54,12 @@ width = 1280
 height = 720
 fps = 15
 
+# Shrink the picture when a crop mark would otherwise fall entirely outside
+# it. A paper bigger than the coverage has all four edges off-screen, so it
+# draws nothing at all -- exactly when it most needs to be seen, because it
+# is telling you the paper does not fit and the camera needs raising.
+fit_marks = true
+
 # Publish the marked-up video as a virtual webcam, so Kamoso, Cheese or a
 # video call shows the crop marks burned in. Needs the v4l2loopback module --
 # see README. Empty means the preview is web-only.

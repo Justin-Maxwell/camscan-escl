@@ -178,7 +178,10 @@ class ESCLHandler(BaseHTTPRequestHandler):
         self._settings_get()
 
     def _preview_page(self) -> None:
-        html = page_html(self.config, preview_mod.marks(self.config))
+        cfg = self.config
+        raw = preview_mod.marks(cfg)
+        scale, ox, oy = preview_mod.fit_transform(cfg, raw)
+        html = page_html(cfg, [preview_mod.place(m, scale, ox, oy) for m in raw])
         self._send(200, html.encode(), "text/html; charset=utf-8")
 
     def _preview_frame(self) -> None:

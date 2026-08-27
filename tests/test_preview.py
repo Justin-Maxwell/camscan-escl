@@ -356,3 +356,65 @@ def test_anchor_means_the_same_corner_whatever_the_rotation(rotate, anchor, touc
         assert mark.x == pytest.approx(cov_left, abs=2)
     else:
         assert mark.x + mark.width == pytest.approx(cov_right, abs=2)
+
+
+def test_a_mark_bigger_than_the_frame_is_still_drawn():
+    """The case that most needs seeing was the one that drew nothing.
+
+    A paper larger than the coverage has all four edges outside the picture,
+    so every line falls off-screen and the preview looks as though the size
+    is simply not enabled -- when what it is trying to say is that the paper
+    does not fit and the camera needs raising.
+    """
+    cfg = replace(
+        Config(),
+        rig=replace(Config().rig, coverage_mm=(189.2, 283.8), anchor="center"),
+        capture=replace(Config().capture, rotate_deg=270),
+        preview=replace(Config().preview, papers=(("A4", 210.0, 297.0),)),
+    )
+    raw = preview.marks(cfg)[0]
+    pw, ph = preview.preview_size(cfg)
+    assert raw.x < 0 and raw.y < 0, "this fixture should not fit, or it tests nothing"
+
+    scale, ox, oy = preview.fit_transform(cfg, [raw])
+    assert scale < 1.0, "should have zoomed out"
+    shown = preview.place(raw, scale, ox, oy)
+    assert 0 <= shown.x and shown.x + shown.width <= pw
+    assert 0 <= shown.y and shown.y + shown.height <= ph
+
+
+def test_zooming_out_keeps_the_marks_shape():
+    cfg = replace(
+        Config(),
+        rig=replace(Config().rig, coverage_mm=(189.2, 283.8)),
+        capture=replace(Config().capture, rotate_deg=270),
+    )
+    raw = preview.marks(cfg)
+    scale, ox, oy = preview.fit_transform(cfg, raw)
+    for mark in raw:
+        shown = preview.place(mark, scale, ox, oy)
+        assert shown.width / shown.height == pytest.approx(
+            mark.width / mark.height, rel=0.02)
+
+
+def test_a_frame_that_already_fits_is_not_scaled():
+    # Shrinking a picture that needs no shrinking would throw away detail
+    # for nothing.
+    cfg = replace(Config(),
+                  rig=replace(Config().rig, coverage_mm=(600.0, 400.0)))
+    raw = preview.marks(cfg)
+    scale, ox, oy = preview.fit_transform(cfg, raw)
+    assert (scale, ox, oy) == (1.0, 0, 0)
+    assert preview.place(raw[0], scale, ox, oy) == raw[0]
+
+
+def test_zoom_out_filters_come_after_the_turn():
+    cfg = replace(
+        Config(),
+        rig=replace(Config().rig, coverage_mm=(189.2, 283.8)),
+        capture=replace(Config().capture, rotate_deg=270),
+    )
+    chain = preview.filter_chain(cfg)
+    assert chain.startswith("transpose")
+    assert "scale=" in chain and "pad=" in chain
+    assert chain.index("transpose") < chain.index("scale=") < chain.index("drawbox")

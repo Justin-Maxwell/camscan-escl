@@ -230,6 +230,49 @@ def _outside_bands(cfg: Config, rect: tuple[int, int, int, int], colour: str) ->
     ]
 
 
+def fit_transform(cfg: Config, marked: list[Mark]) -> tuple[float, int, int]:
+    """Scale and offset that bring every mark inside the published frame.
+
+    A mark larger than the frame has all four edges outside it and so draws
+    nothing at all -- which is exactly when you most want to see it, because
+    it is telling you the paper does not fit and the camera needs raising.
+    Shrinking the picture into the middle and letting the marks spill onto
+    the padding shows the whole story.
+
+    Returns (scale, x offset, y offset); scale is never above 1, since there
+    is no reason to enlarge a picture that already fits.
+    """
+    pw, ph = preview_size(cfg)
+    if not marked or not cfg.preview.fit_marks:
+        return (1.0, 0, 0)
+    ux, uy, uw, uh = union_rect(marked)
+    left, top = min(0, ux), min(0, uy)
+    right, bottom = max(pw, ux + uw), max(ph, uy + uh)
+    span_w, span_h = right - left, bottom - top
+    scale = min(pw / span_w, ph / span_h, 1.0)
+    if scale >= 0.999:
+        return (1.0, 0, 0)
+    off_x = -left * scale + (pw - span_w * scale) / 2
+    off_y = -top * scale + (ph - span_h * scale) / 2
+    return (scale, int(round(off_x)), int(round(off_y)))
+
+
+def place(mark: Mark, scale: float, off_x: int, off_y: int) -> Mark:
+    """Move a mark into the zoomed-out frame alongside the picture."""
+    if scale == 1.0 and not off_x and not off_y:
+        return mark
+    return Mark(
+        name=mark.name,
+        x=int(round(mark.x * scale + off_x)),
+        y=int(round(mark.y * scale + off_y)),
+        width=int(round(mark.width * scale)),
+        height=int(round(mark.height * scale)),
+        clipped_top=mark.clipped_top,
+        clipped_bottom=mark.clipped_bottom,
+        clipped_right=mark.clipped_right,
+    )
+
+
 def filter_chain(cfg: Config) -> str:
     """ffmpeg filters that burn the crop marks into the video.
 
@@ -237,7 +280,11 @@ def filter_chain(cfg: Config) -> str:
     a given configuration, so there is no reason to decode, draw and
     re-encode every frame in this process.
     """
-    marked = marks(cfg)
+    raw = marks(cfg)
+    scale, off_x, off_y = fit_transform(cfg, raw)
+    marked = [place(m, scale, off_x, off_y) for m in raw]
+    pw, ph = preview_size(cfg)
+
     parts = []
     # Turn the picture upright first, so everything after this -- the marks,
     # the loopback, the web page -- is in one coordinate space: the one the
@@ -246,6 +293,13 @@ def filter_chain(cfg: Config) -> str:
     turn = TRANSPOSE.get(cfg.capture.rotate_deg % 360)
     if turn:
         parts.append(turn)
+
+    # Zoom out, if a mark would otherwise fall entirely outside the picture.
+    if scale != 1.0:
+        parts.append(f"scale=w={int(round(pw * scale))}:h={int(round(ph * scale))}")
+        parts.append(
+            f"pad=w={pw}:h={ph}:x={off_x}:y={off_y}:color={cfg.preview.pad_colour}"
+        )
 
     # Dead zone next, so the marks and labels draw on top of it.
     rect = union_rect(marked)
