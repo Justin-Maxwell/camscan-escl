@@ -64,3 +64,31 @@ def test_region_entirely_outside_coverage_is_blank():
     img = Image.open(io.BytesIO(jpeg)).convert("RGB")
     assert img.size == settings.expected_size
     assert img.getpixel((img.width // 2, img.height // 2)) == (255, 255, 255)
+
+
+def test_anchor_shifts_which_pixels_are_used():
+    # The units contract is about size; the anchor is about position. A
+    # centred anchor must still return exactly the contracted dimensions.
+    from camscan_escl.imaging import anchor_offset_mm, render
+    from camscan_escl.escl import ScanRegion, ScanSettings
+    from PIL import Image
+    import io
+
+    # A frame with a distinctive left half, so a shift is detectable.
+    frame = Image.new("RGB", (2304, 1536), (255, 255, 255))
+    frame.paste(Image.new("RGB", (1152, 1536), (0, 0, 0)), (0, 0))
+
+    settings = ScanSettings(ScanRegion(0, 0, 1240, 1754), 150, 150, "RGB24")
+    coverage = (210.0, 297.0)
+
+    left = Image.open(io.BytesIO(render(frame, settings, coverage, 90, "top-left")))
+    right = Image.open(io.BytesIO(render(frame, settings, coverage, 90, "top-right")))
+
+    assert left.size == right.size == settings.expected_size
+    # Same contract, different pixels: shifting right must pull in more white.
+    assert right.convert("L").histogram()[255:] > left.convert("L").histogram()[255:]
+
+
+def test_unknown_anchor_falls_back_to_the_origin():
+    from camscan_escl.imaging import anchor_offset_mm
+    assert anchor_offset_mm("nonsense", (210.0, 297.0), (148.0, 210.0)) == (0.0, 0.0)

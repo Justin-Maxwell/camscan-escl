@@ -185,11 +185,31 @@ def test_labels_do_not_stack_on_a_shared_top_edge():
 
 
 def test_union_is_the_bounding_box_of_every_paper():
-    m = preview.marks(Config())
+    cfg = replace(Config(), rig=replace(Config().rig, anchor="top-left"))
+    m = preview.marks(cfg)
     x, y, w, h = preview.union_rect(m)
     assert (x, y) == (0, -67)
     assert w == max(k.x + k.width for k in m)
     assert h == max(k.y + k.height for k in m) - y
+
+
+def test_anchor_moves_the_marks_and_matches_the_scan():
+    # The preview and imaging.render must agree about where a region sits, or
+    # the mark points somewhere the scan will not crop.
+    from camscan_escl.imaging import anchor_offset_mm
+
+    cfg = replace(Config(), rig=replace(Config().rig, anchor="center"))
+    a5 = next(m for m in preview.marks(cfg) if m.name == "A5")
+    cov = cfg.rig.coverage_mm
+    off_x, _ = anchor_offset_mm("center", cov, (148.0, 210.0))
+    expected_x = round(off_x / cov[0] * cfg.capture.native_width
+                       * cfg.preview.width / cfg.capture.native_width)
+    assert a5.x == expected_x
+    assert a5.x > 0, "a centred A5 should not sit against the left edge"
+
+    left = next(m for m in preview.marks(
+        replace(cfg, rig=replace(cfg.rig, anchor="top-left"))) if m.name == "A5")
+    assert left.x == 0
 
 
 def test_dead_zone_is_dimmed_outside_the_union():

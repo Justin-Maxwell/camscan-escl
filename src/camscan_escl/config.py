@@ -155,6 +155,10 @@ class RigConfig:
     # Physical area the frame covers at rig height, in mm, [width, height],
     # measured in the same orientation the frame ends up after rotate_deg.
     coverage_mm: tuple[float, float] = (210.0, 297.0)
+    # Where the scan region sits within that coverage. Clients always send an
+    # origin of 0,0, so without this every scan is pinned to the top left of
+    # what the camera sees. A rig usually wants the page in the middle.
+    anchor: str = "center"
 
 
 @dataclass(frozen=True)
@@ -218,7 +222,8 @@ def load(path: Path | None = None) -> Config:
         rig=RigConfig(
             coverage_mm=tuple(float(v) for v in coverage)
             if coverage
-            else RigConfig().coverage_mm
+            else RigConfig().coverage_mm,
+            anchor=rig_raw.get("anchor", RigConfig().anchor),
         ),
         source_path=path,
     )
@@ -250,9 +255,13 @@ def apply_adjustments(cfg: Config, data: dict) -> Config:
     """Overlay a settings dict onto a Config, ignoring anything unrecognised."""
     coverage = data.get("coverage_mm")
     papers = data.get("papers")
+    anchor = data.get("anchor")
     if coverage and len(coverage) == 2:
-        cfg = replace(cfg, rig=RigConfig(coverage_mm=(float(coverage[0]),
-                                                      float(coverage[1]))))
+        cfg = replace(cfg, rig=replace(cfg.rig,
+                                       coverage_mm=(float(coverage[0]),
+                                                    float(coverage[1]))))
+    if anchor:
+        cfg = replace(cfg, rig=replace(cfg.rig, anchor=str(anchor)))
     if papers is not None:
         cfg = replace(cfg, preview=replace(
             cfg.preview,
@@ -269,6 +278,7 @@ def save_adjustments(cfg: Config, path: Path | None = None) -> Path:
         "_comment": "Written by the camscan-escl settings GUI. Delete this "
                     "file to fall back to config.toml.",
         "coverage_mm": list(cfg.rig.coverage_mm),
+        "anchor": cfg.rig.anchor,
         "papers": [list(p) for p in cfg.preview.papers],
     }
     tmp = path.with_suffix(".json.tmp")
@@ -282,6 +292,11 @@ def validate(cfg: Config) -> None:
         raise ValueError("capture.command must contain %f, the output path")
     if len(cfg.rig.coverage_mm) != 2 or min(cfg.rig.coverage_mm) <= 0:
         raise ValueError("rig.coverage_mm must be two positive numbers")
+    from .imaging import ANCHORS
+    if cfg.rig.anchor not in ANCHORS:
+        raise ValueError(
+            f"rig.anchor must be one of {', '.join(sorted(ANCHORS))}"
+        )
     if cfg.capture.rotate_deg % 90:
         raise ValueError("capture.rotate_deg must be a multiple of 90")
     if not 1 <= cfg.scanner.jpeg_quality <= 100:

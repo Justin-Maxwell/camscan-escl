@@ -18,11 +18,39 @@ log = logging.getLogger(__name__)
 WHITE_RGB = (255, 255, 255)
 
 
+# Where a scan region sits inside the frame's coverage. eSCL regions are
+# expressed from an origin, and the client always sends 0,0 -- so without
+# this every scan is pinned to the top left of what the camera sees, and the
+# page has to be put there. A rig usually wants the page in the middle.
+ANCHORS = {
+    "top-left": (0.0, 0.0), "top": (0.5, 0.0), "top-right": (1.0, 0.0),
+    "left": (0.0, 0.5), "center": (0.5, 0.5), "right": (1.0, 0.5),
+    "bottom-left": (0.0, 1.0), "bottom": (0.5, 1.0), "bottom-right": (1.0, 1.0),
+}
+
+
+def anchor_offset_mm(
+    anchor: str,
+    coverage_mm: tuple[float, float],
+    region_mm: tuple[float, float],
+) -> tuple[float, float]:
+    """How far to shift a region of this size to sit at `anchor`, in mm.
+
+    Negative when the region is larger than the coverage, which keeps an
+    oversized request centred on what the camera can actually see rather
+    than dumping the overflow on one side.
+    """
+    fx, fy = ANCHORS.get(anchor, ANCHORS["top-left"])
+    return ((coverage_mm[0] - region_mm[0]) * fx,
+            (coverage_mm[1] - region_mm[1]) * fy)
+
+
 def render(
     frame: Image.Image,
     settings: ScanSettings,
     coverage_mm: tuple[float, float],
     jpeg_quality: int,
+    anchor: str = "top-left",
 ) -> bytes:
     """Map the requested ScanRegion onto the frame and encode it as JPEG."""
     frame = frame.convert("RGB")
@@ -33,6 +61,9 @@ def render(
     px_per_mm_y = src_h / cov_h_mm
 
     x_mm, y_mm, w_mm, h_mm = settings.region.mm
+    off_x, off_y = anchor_offset_mm(anchor, coverage_mm, (w_mm, h_mm))
+    x_mm += off_x
+    y_mm += off_y
 
     # The requested region as a rectangle in source pixels. It may fall wholly
     # or partly outside the frame -- the page genuinely was not in shot there,

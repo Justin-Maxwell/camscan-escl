@@ -28,11 +28,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import signal
 import subprocess
+import time
 import threading
 from dataclasses import dataclass
 
 from .config import Config
+from .imaging import anchor_offset_mm
 
 log = logging.getLogger(__name__)
 
@@ -88,11 +91,15 @@ def marks(cfg: Config) -> list[Mark]:
 
     out = []
     for name, mm_w, mm_h in cfg.preview.papers:
-        # Paper -> still pixels, then still -> preview pixels.
+        # Paper -> still pixels, then still -> preview pixels. The anchor
+        # offset must match imaging.render exactly: a mark that disagrees
+        # with where the scan crops is worse than no mark.
+        off_x, off_y = anchor_offset_mm(cfg.rig.anchor, (cov_w, cov_h),
+                                        (mm_w, mm_h))
         sx = mm_w / cov_w * still[0]
         sy = mm_h / cov_h * still[1]
-        px = 0
-        py = (0 - top) * scale
+        px = (off_x / cov_w * still[0]) * scale
+        py = (off_y / cov_h * still[1] - top) * scale
         pw = sx * scale
         ph = sy * scale
         out.append(
@@ -102,9 +109,9 @@ def marks(cfg: Config) -> list[Mark]:
                 y=int(round(py)),
                 width=int(round(pw)),
                 height=int(round(ph)),
-                clipped_top=top > 0,
-                clipped_bottom=sy > bottom,
-                clipped_right=sx > still[0],
+                clipped_top=py < 0,
+                clipped_bottom=py + ph > preview[1],
+                clipped_right=px + pw > preview[0],
             )
         )
     return out
@@ -269,22 +276,29 @@ class PreviewStream:
             return
         self._running = False
         proc, self._proc = self._proc, None
+        started = time.monotonic()
         if proc is not None:
-            proc.terminate()
+            # SIGKILL outright. There is nothing to flush -- both outputs are
+            # live streams, not files being finalised -- and asking politely
+            # cost real time: SIGTERM left ffmpeg running until the timeout
+            # expired, measured at 5.26s of dead air on every single scan,
+            # and SIGINT was no better at 1.72s. That was most of the delay
+            # between pressing scan and seeing a page.
+            proc.kill()
             try:
-                # Wait for the process to actually go, not merely be asked.
-                # The device is not free until it has, and the capture that
-                # follows would get EBUSY.
-                proc.wait(timeout=5)
+                # Wait for it to actually go, not merely be asked. The device
+                # is not free until it has, and the capture that follows
+                # would get EBUSY.
+                proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
+                log.warning("preview process would not die")
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
         with self._cond:
             self._latest = None
             self._cond.notify_all()
+        log.debug("preview stopped in %.2fs", time.monotonic() - started)
 
     def stop(self) -> None:
         with self._camera:

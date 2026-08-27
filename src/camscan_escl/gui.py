@@ -29,8 +29,20 @@ KNOWN_PAPERS = (
     ("A4", 210.0, 297.0),
     ("A5", 148.0, 210.0),
     ("A6", 105.0, 148.0),
+    ("B5", 176.0, 250.0),      # NAPS2 offers it
+    ("B7", 88.0, 125.0),
     ("Letter", 215.9, 279.4),
     ("Legal", 215.9, 355.6),
+)
+
+# Must match preview.MARK_COLOURS, and in the same order: the swatch beside a
+# checkbox is a promise about which line in the picture it refers to.
+SWATCHES = ("#ff0000", "#00ff00", "#00ffff", "#ffff00", "#ff00ff")
+
+ANCHORS = (
+    ("top-left", "top", "top-right"),
+    ("left", "center", "right"),
+    ("bottom-left", "bottom", "bottom-right"),
 )
 
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"
@@ -109,7 +121,8 @@ class Window(Gtk.ApplicationWindow):
         box.set_margin_bottom(14)
         box.set_margin_start(14)
         box.set_margin_end(14)
-        box.set_size_request(290, -1)
+        # Sized for the widest label it must hold, not for the window.
+        box.set_size_request(232, -1)
 
         head = Gtk.Label(xalign=0)
         head.set_markup("<b>Frame coverage</b>")
@@ -138,14 +151,43 @@ class Window(Gtk.ApplicationWindow):
         # Proportional nudges: at a fixed camera height the frame keeps its
         # aspect ratio, so scaling both together is the move that matches
         # raising or lowering the camera.
-        nudge = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+        nudge = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4,
                         homogeneous=True)
         for label, factor in (("−5%", 0.95), ("−1%", 0.99),
                               ("+1%", 1.01), ("+5%", 1.05)):
             b = Gtk.Button(label=label)
+            b.set_size_request(44, 34)   # near square, not stretched banners
             b.connect("clicked", self._on_nudge, factor)
             nudge.append(b)
         box.append(nudge)
+
+        box.append(Gtk.Separator())
+        anchor_head = Gtk.Label(xalign=0)
+        anchor_head.set_markup("<b>Anchor</b>")
+        box.append(anchor_head)
+        anchor_hint = Gtk.Label(xalign=0, wrap=True)
+        anchor_hint.set_markup(
+            "<small>Which part of the frame a scan is taken from.</small>"
+        )
+        box.append(anchor_hint)
+
+        agrid = Gtk.Grid(column_spacing=4, row_spacing=4)
+        agrid.set_halign(Gtk.Align.START)
+        self.anchor_buttons = {}
+        first = None
+        for r, row in enumerate(ANCHORS):
+            for c, name in enumerate(row):
+                b = Gtk.ToggleButton()
+                b.set_size_request(38, 34)
+                b.set_tooltip_text(name)
+                if first is None:
+                    first = b
+                else:
+                    b.set_group(first)
+                b.connect("toggled", self._on_anchor, name)
+                self.anchor_buttons[name] = b
+                agrid.attach(b, c, r, 1, 1)
+        box.append(agrid)
 
         box.append(Gtk.Separator())
         papers = Gtk.Label(xalign=0)
@@ -153,10 +195,20 @@ class Window(Gtk.ApplicationWindow):
         box.append(papers)
 
         self.paper_checks = {}
+        self.paper_swatches = {}
         for name, mm_w, mm_h in KNOWN_PAPERS:
-            check = Gtk.CheckButton(label=f"{name}  ({mm_w:g} × {mm_h:g} mm)")
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            swatch = Gtk.DrawingArea()
+            swatch.set_size_request(14, 14)
+            swatch.set_valign(Gtk.Align.CENTER)
+            swatch.set_draw_func(self._draw_swatch, name)
+            self.paper_swatches[name] = swatch
+            check = Gtk.CheckButton(label=f"{name}  {mm_w:g}×{mm_h:g}")
+            check.connect("toggled", lambda _c: self._refresh_swatches())
             self.paper_checks[name] = check
-            box.append(check)
+            row.append(swatch)
+            row.append(check)
+            box.append(row)
 
         box.append(Gtk.Separator())
         self.apply_button = Gtk.Button(label="Apply")
@@ -175,6 +227,34 @@ class Window(Gtk.ApplicationWindow):
 
     # -- behaviour ------------------------------------------------------
 
+    def _enabled_order(self) -> list[str]:
+        """Enabled papers, in the order the daemon will colour them."""
+        return [n for n, _w, _h in KNOWN_PAPERS
+                if self.paper_checks[n].get_active()]
+
+    def _draw_swatch(self, area, cr, width, height, name) -> None:
+        order = self._enabled_order()
+        if name not in order:
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)   # not drawn on the video
+        else:
+            hexcolour = SWATCHES[order.index(name) % len(SWATCHES)]
+            r = int(hexcolour[1:3], 16) / 255
+            g = int(hexcolour[3:5], 16) / 255
+            b = int(hexcolour[5:7], 16) / 255
+            cr.set_source_rgb(r, g, b)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+
+    def _refresh_swatches(self) -> None:
+        # Colours are assigned by position among the enabled sizes, so
+        # ticking one box changes the colour of the ones after it.
+        for swatch in self.paper_swatches.values():
+            swatch.queue_draw()
+
+    def _on_anchor(self, button, name: str) -> None:
+        if button.get_active() and not self._applying:
+            self._on_apply(None)
+
     def _say(self, text: str) -> None:
         self.status.set_markup(f"<small>{GLib.markup_escape_text(text)}</small>")
 
@@ -188,8 +268,12 @@ class Window(Gtk.ApplicationWindow):
             active = {p[0] for p in data["papers"]}
             for name, check in self.paper_checks.items():
                 check.set_active(name in active)
+            anchor = data.get("anchor", "center")
+            if anchor in self.anchor_buttons:
+                self.anchor_buttons[anchor].set_active(True)
         finally:
             self._applying = False
+        self._refresh_swatches()
         self._say(f"coverage {w:g} × {h:g} mm")
 
     def _on_nudge(self, _button, factor: float) -> None:
@@ -205,6 +289,8 @@ class Window(Gtk.ApplicationWindow):
                             self.height_spin.get_value()],
             "papers": [list(p) for p in KNOWN_PAPERS
                        if self.paper_checks[p[0]].get_active()],
+            "anchor": next((n for n, b in self.anchor_buttons.items()
+                            if b.get_active()), "center"),
         }
         self.apply_button.set_sensitive(False)
         self._say("applying…")

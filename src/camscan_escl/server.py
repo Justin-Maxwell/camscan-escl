@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import capture, escl, imaging
@@ -129,6 +130,7 @@ class ESCLHandler(BaseHTTPRequestHandler):
         cfg = type(self).config
         body = json.dumps({
             "coverage_mm": list(cfg.rig.coverage_mm),
+            "anchor": cfg.rig.anchor,
             "papers": [list(p) for p in cfg.preview.papers],
             "preview": {"width": cfg.preview.width, "height": cfg.preview.height},
             "still": [cfg.capture.native_width, cfg.capture.native_height],
@@ -222,8 +224,14 @@ class ESCLHandler(BaseHTTPRequestHandler):
             # The preview owns the camera between scans, and V4L2 streaming
             # access is exclusive: without handing it back, this grab gets
             # EBUSY. `released` restores the stream afterwards either way.
+            t0 = time.monotonic()
             with self.preview.released():
+                t1 = time.monotonic()
                 frame = capture.grab(self.config.capture)
+                t2 = time.monotonic()
+            t3 = time.monotonic()
+            log.info("timing: release %.2fs, capture %.2fs, resume %.2fs",
+                     t1 - t0, t2 - t1, t3 - t2)
             frame = imaging.orient(frame, self.config.capture.rotate_deg)
 
             jpeg = imaging.render(
@@ -231,6 +239,7 @@ class ESCLHandler(BaseHTTPRequestHandler):
                 job.settings,
                 self.config.rig.coverage_mm,
                 self.config.scanner.jpeg_quality,
+                self.config.rig.anchor,
             )
         except Exception as exc:
             # Fail the job, stay Idle, stay selectable (§7, acceptance 7).
