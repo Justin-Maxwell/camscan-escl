@@ -231,3 +231,52 @@ def test_no_bands_are_drawn_off_screen():
         w = int(part.split(":w=")[1].split(":")[0])
         h = int(part.split(":h=")[1].split(":")[0])
         assert w > 0 and h > 0, part
+
+
+@pytest.mark.parametrize("landscape", [False, True])
+@pytest.mark.parametrize("rotate", [0, 90])
+def test_a_mark_can_only_have_its_papers_aspect(landscape, rotate):
+    """The invariant that matters: A4 is 1:1.414, so its mark is that or 1.414:1.
+
+    Nothing else is geometrically possible. Every orientation bug so far has
+    produced a mark of some aspect no sheet of paper has -- one made A4
+    nearly 3:1 -- while the sizes still looked plausible in isolation. This
+    catches all of them at once, whatever combination of turns caused it.
+
+    Only holds when the coverage matches the frame's shape, which is the only
+    correct configuration anyway: otherwise the mapping is anisotropic and
+    every mark is distorted along with every scan.
+    """
+    # The coverage describes the frame AFTER rotation, so a turned camera
+    # needs a portrait coverage for the mapping to be isotropic at all.
+    coverage = (200.0, 300.0) if rotate % 180 == 90 else (300.0, 200.0)
+    cfg = replace(
+        Config(),
+        rig=replace(Config().rig, coverage_mm=coverage, anchor="top-left"),
+        capture=replace(Config().capture, rotate_deg=rotate),
+        preview=replace(Config().preview, landscape=landscape),
+    )
+    for mark in preview.marks(cfg):
+        paper = next(p for p in cfg.preview.papers if p[0] == mark.name)
+        want = paper[1] / paper[2]
+        got = mark.width / mark.height
+        assert got == pytest.approx(want, rel=0.01) or \
+               got == pytest.approx(1 / want, rel=0.01), (
+            f"{mark.name} drawn {mark.width}x{mark.height} = {got:.3f}:1, "
+            f"but the paper is {want:.3f}:1 (or {1/want:.3f}:1 turned)"
+        )
+
+
+def test_landscape_turns_the_paper_not_the_frame():
+    # A4 landscape is wider than tall; the coverage is untouched, because the
+    # camera sees the same area whichever way the page lies.
+    cfg = replace(Config(),
+                  rig=replace(Config().rig, coverage_mm=(300.0, 200.0)))
+    portrait = next(m for m in preview.marks(cfg) if m.name == "A4")
+    turned = next(m for m in preview.marks(
+        replace(cfg, preview=replace(cfg.preview, landscape=True)))
+        if m.name == "A4")
+    assert portrait.width < portrait.height
+    assert turned.width > turned.height
+    assert turned.width == pytest.approx(portrait.height, rel=0.01)
+    assert turned.height == pytest.approx(portrait.width, rel=0.01)

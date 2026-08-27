@@ -91,17 +91,28 @@ def marks(cfg: Config) -> list[Mark]:
     # preview shows the sensor's own orientation. With the camera turned, a
     # portrait page lies across the frame, so both the coverage and each
     # paper have to be swapped to land the marks where the scan will crop.
-    # Either the camera is physically turned (rotate_deg), or the marks are
-    # simply laid across the frame for landscape pages (preview.landscape).
-    rotated = (cfg.capture.rotate_deg % 180 == 90) ^ cfg.preview.landscape
-    if rotated:
+    # Two different turns, and only one of them turns the frame.
+    #
+    #   camera_rotated -- the camera is physically on its side, so
+    #       coverage_mm describes a frame the other way round from the one
+    #       the preview shows. The coverage AND the paper have to be swapped
+    #       to get back to preview coordinates.
+    #   landscape -- the page merely lies across the frame. The camera sees
+    #       the same physical area as before, so the coverage is untouched
+    #       and only the paper turns.
+    #
+    # Swapping the coverage for `landscape` made an A4 mark 2009x631 in a
+    # 1280-wide preview: nearly 3:1, an aspect no A-series paper has.
+    camera_rotated = cfg.capture.rotate_deg % 180 == 90
+    turn_paper = camera_rotated ^ cfg.preview.landscape
+    if camera_rotated:
         cov_w, cov_h = cov_h, cov_w
     scale = preview[0] / still[0]
     top, bottom = visible_still_rows(still, preview)
 
     out = []
     for name, mm_w, mm_h in cfg.preview.papers:
-        if rotated:
+        if turn_paper:
             mm_w, mm_h = mm_h, mm_w
         # Paper -> still pixels, then still -> preview pixels. The anchor
         # offset must match imaging.render exactly: a mark that disagrees
