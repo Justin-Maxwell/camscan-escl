@@ -40,7 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
-        cfg = config_mod.load(args.config)
+        cfg = config_mod.load_adjustments(config_mod.load(args.config))
+        config_mod.validate(cfg)
     except (OSError, ValueError) as exc:
         print(f"camscan-escl: config error: {exc}", file=sys.stderr)
         return 2

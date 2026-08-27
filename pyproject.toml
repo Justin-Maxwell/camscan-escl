@@ -16,6 +16,9 @@ dev = ["pytest>=8.0", "zeroconf>=0.130"]
 
 [project.scripts]
 camscan-escl = "camscan_escl.__main__:main"
+# PyGObject is deliberately not a dependency: it ships with a Fedora desktop
+# and the daemon must not need a GUI stack to run headless.
+camscan-escl-gui = "camscan_escl.gui:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/camscan_escl"]

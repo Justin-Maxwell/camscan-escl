@@ -7,14 +7,26 @@ defaults are the ones written in the spec.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-DEFAULT_CONFIG_PATH = Path(
+log = logging.getLogger(__name__)
+
+CONFIG_DIR = Path(
     os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
-) / "camscan-escl" / "config.toml"
+) / "camscan-escl"
+
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "config.toml"
+
+# Settings the GUI writes, kept apart from the hand-authored TOML above.
+# JSON because the standard library can write it: rewriting a user's
+# commented config file with a generated one would lose the comments, and
+# those comments are where the reasoning lives.
+ADJUSTMENTS_PATH = CONFIG_DIR / "adjustments.json"
 
 
 @dataclass(frozen=True)
@@ -212,6 +224,57 @@ def load(path: Path | None = None) -> Config:
     )
     validate(cfg)
     return cfg
+
+
+def load_adjustments(cfg: Config, path: Path | None = None) -> Config:
+    """Apply the GUI's saved settings on top of a loaded config.
+
+    Called by the entry point rather than by `load`, so that `load` stays a
+    pure function of the file it is given. Folding it in meant anything
+    calling `load` -- tests included -- silently inherited whichever
+    calibration this particular machine happened to have saved.
+    """
+    path = Path(path) if path else ADJUSTMENTS_PATH
+    if not path.exists():
+        return cfg
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        # Never let a corrupt adjustments file stop the scanner starting.
+        log.warning("ignoring unreadable %s: %s", path, exc)
+        return cfg
+    return apply_adjustments(cfg, data)
+
+
+def apply_adjustments(cfg: Config, data: dict) -> Config:
+    """Overlay a settings dict onto a Config, ignoring anything unrecognised."""
+    coverage = data.get("coverage_mm")
+    papers = data.get("papers")
+    if coverage and len(coverage) == 2:
+        cfg = replace(cfg, rig=RigConfig(coverage_mm=(float(coverage[0]),
+                                                      float(coverage[1]))))
+    if papers is not None:
+        cfg = replace(cfg, preview=replace(
+            cfg.preview,
+            papers=tuple((str(n), float(w), float(h)) for n, w, h in papers),
+        ))
+    return cfg
+
+
+def save_adjustments(cfg: Config, path: Path | None = None) -> Path:
+    """Persist the adjustable settings. Written whole, so it stays readable."""
+    path = Path(path) if path else ADJUSTMENTS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "_comment": "Written by the camscan-escl settings GUI. Delete this "
+                    "file to fall back to config.toml.",
+        "coverage_mm": list(cfg.rig.coverage_mm),
+        "papers": [list(p) for p in cfg.preview.papers],
+    }
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n")
+    tmp.replace(path)  # atomic: a half-written file must never be loaded
+    return path
 
 
 def validate(cfg: Config) -> None:

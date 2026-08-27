@@ -140,6 +140,36 @@ and see whether the scan matches. It is also how you notice that a paper size
 does not fit at all — with the default A4 coverage, the Letter mark comes out
 1316 px wide in a 1280 px frame.
 
+### The settings window
+
+```bash
+camscan-escl-gui
+```
+
+A live view with the controls beside it: frame coverage in mm, nudge buttons,
+and checkboxes for which paper sizes to draw. Changes apply immediately —
+the daemon rebuilds its filter chain and the picture updates — and persist to
+`~/.config/camscan-escl/adjustments.json`. That file is written by the GUI
+and is separate from your `config.toml` on purpose: generated output must not
+overwrite a file whose comments carry the reasoning. Delete it to fall back.
+
+This is how you calibrate `rig.coverage_mm`, the measurement every scan's
+scale depends on. Put a real sheet under the camera, adjust until its mark
+sits on the sheet's edges, and it is measured rather than guessed. The ±%
+buttons scale width and height together, which is what raising or lowering
+the camera does.
+
+It speaks to the daemon over HTTP, so it never touches the camera and runs
+fine from another machine with `--url http://<host>:8090`.
+
+**It needs PyGObject**, which ships with a Fedora desktop but is not in a
+plain venv — deliberately not a dependency, since the daemon must run
+headless without a GUI stack. From a venv that lacks it:
+
+```bash
+PYTHONPATH=src python3 -m camscan_escl.gui
+```
+
 ### Crop marks inside Kamoso, or any webcam app
 
 A browser tab is a poor place to line up paper. Point the daemon at a

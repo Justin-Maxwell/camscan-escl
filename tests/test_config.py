@@ -79,3 +79,32 @@ def test_autofocus_is_the_default():
     # risk. The value that used to ship here was measurably softer than what
     # the camera picks for itself, and nothing had ever checked.
     assert config_mod.Config().capture.focus.disable_autofocus is False
+
+
+def test_adjustments_round_trip_and_override_the_toml(tmp_path):
+    # The GUI's settings are written separately from the hand-authored TOML:
+    # generated output must never overwrite a file whose comments carry the
+    # reasoning.
+    from dataclasses import replace
+
+    cfg = replace(config_mod.Config(),
+                  rig=config_mod.RigConfig(coverage_mm=(301.0, 402.0)))
+    path = tmp_path / "adjustments.json"
+    config_mod.save_adjustments(cfg, path)
+
+    loaded = config_mod.load_adjustments(config_mod.Config(), path)
+    assert loaded.rig.coverage_mm == (301.0, 402.0)
+
+
+def test_corrupt_adjustments_do_not_stop_the_daemon(tmp_path):
+    # A calibration file is not worth refusing to scan over.
+    path = tmp_path / "adjustments.json"
+    path.write_text("{ this is not json")
+    cfg = config_mod.load_adjustments(config_mod.Config(), path)
+    assert cfg.rig.coverage_mm == config_mod.RigConfig().coverage_mm
+
+
+def test_apply_adjustments_ignores_unknown_keys(tmp_path):
+    cfg = config_mod.apply_adjustments(config_mod.Config(),
+                                       {"nonsense": 1, "coverage_mm": [200, 300]})
+    assert cfg.rig.coverage_mm == (200.0, 300.0)

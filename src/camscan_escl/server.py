@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import capture, escl, imaging
+from . import config as config_mod
 from . import preview as preview_mod
 from .config import Config
 from .jobs import JobStore
@@ -59,6 +61,8 @@ class ESCLHandler(BaseHTTPRequestHandler):
             return self._preview_stream()
         if path == PREVIEW + "/frame":
             return self._preview_frame()
+        if path == PREVIEW + "/settings":
+            return self._settings_get()
 
         parts = self._path_parts()
         if parts is None:
@@ -82,6 +86,9 @@ class ESCLHandler(BaseHTTPRequestHandler):
         self._send(404)
 
     def do_POST(self) -> None:
+        if self.path.split("?", 1)[0].rstrip("/") == PREVIEW + "/settings":
+            return self._settings_post()
+
         parts = self._path_parts()
         if parts != ["ScanJobs"]:
             return self._send(404)
@@ -117,6 +124,53 @@ class ESCLHandler(BaseHTTPRequestHandler):
         self._send(404)
 
     # -- preview ---------------------------------------------------------
+
+    def _settings_get(self) -> None:
+        cfg = type(self).config
+        body = json.dumps({
+            "coverage_mm": list(cfg.rig.coverage_mm),
+            "papers": [list(p) for p in cfg.preview.papers],
+            "preview": {"width": cfg.preview.width, "height": cfg.preview.height},
+            "still": [cfg.capture.native_width, cfg.capture.native_height],
+        }).encode()
+        self._send(200, body, "application/json")
+
+    def _settings_post(self) -> None:
+        """Apply new settings and restart the pipeline so they take effect.
+
+        The marks are baked into ffmpeg's filter chain when it starts, so a
+        change means a new pipeline. That is a second or so, and it is why
+        the GUI drives this rather than the user editing TOML and running
+        systemctl.
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            data = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError as exc:
+            return self._send(400, f"bad JSON: {exc}".encode(), "text/plain")
+
+        try:
+            cfg = config_mod.apply_adjustments(type(self).config, data)
+            config_mod.validate(cfg)
+        except (ValueError, TypeError) as exc:
+            return self._send(400, str(exc).encode(), "text/plain")
+
+        # Every handler instance reads these off the class, so rebind there.
+        type(self).config = cfg
+        self.preview._cfg = cfg
+        try:
+            saved = config_mod.save_adjustments(cfg)
+        except OSError as exc:
+            log.warning("could not save adjustments: %s", exc)
+            saved = None
+
+        with self.preview.released():
+            pass  # released() stops and restarts, which reloads the filters
+
+        log.info("settings updated: coverage_mm=%s papers=%d%s",
+                 list(cfg.rig.coverage_mm), len(cfg.preview.papers),
+                 f", saved to {saved}" if saved else " (not saved)")
+        self._settings_get()
 
     def _preview_page(self) -> None:
         html = page_html(self.config, preview_mod.marks(self.config))
