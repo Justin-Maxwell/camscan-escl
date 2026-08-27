@@ -40,6 +40,29 @@ and whether `NAPS2.Mdns` has moved past 1.0.1. This may already be fixed.
 
 ---
 
+## 5. GStreamer will not enumerate the v4l2loopback preview device
+
+**Status:** open, worked around
+**Workaround:** `ffplay -f v4l2 -i /dev/video2`, which does not enumerate
+
+Kamoso, and anything else built on GStreamer, lists only the real camera and
+never the loopback the preview is published on. Measured with GStreamer's own
+`DeviceMonitor`: one device returned, and `GstIntRange` criticals raised while
+probing the loopback — its single discrete frame rate (30/1) yields a range
+whose start is not less than its end, so caps construction fails and the
+device is dropped. Demoting `pipewiredeviceprovider` and forcing
+`v4l2deviceprovider` changes nothing.
+
+Capture itself is fine. `v4l2-ctl -d /dev/video2 --list-formats-ext` reports a
+clean `YU12 1280x720 @30fps`, `gst-launch-1.0 v4l2src device=/dev/video2`
+plays it, and ffmpeg reads frames from it. Only enumeration fails.
+
+Worth trying: publishing more than one frame-rate or a rate *range* on the
+loopback, which may be enough for GStreamer to build valid caps. Whether
+ffmpeg's v4l2 output can advertise that is unknown.
+
+---
+
 ## 2. `rig.coverage_mm` is still a placeholder — scans are the wrong scale
 
 **Status:** open, needs a ruler and five minutes

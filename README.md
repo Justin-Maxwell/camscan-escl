@@ -168,9 +168,28 @@ enable = true
 loopback_device = "/dev/video9"
 ```
 
-Kamoso will list "camscan preview" alongside the real camera. **Open that
-one, not the C920** — the C920 itself is held by the daemon and will report
-`Device or resource busy`. The marks are drawn by ffmpeg as part of the same
+**Kamoso does not work for this, and nor does anything else built on
+GStreamer.** Measured: GStreamer's device monitor enumerates only the C920
+and silently drops the loopback, emitting `GstIntRange` criticals while
+probing it — its single discrete frame rate makes a degenerate range and the
+device is discarded. Forcing the V4L2 provider ahead of the PipeWire one
+does not help. The device itself is fine: `v4l2-ctl` reports a clean
+`YU12 1280x720 @30fps` and `gst-launch v4l2src device=/dev/video2` plays it
+happily when named explicitly. It is enumeration that fails, not capture.
+
+What does work, both pre-installed on Fedora:
+
+```bash
+ffplay -f v4l2 -window_title "camscan preview" -i /dev/video2
+```
+
+```bash
+gst-launch-1.0 v4l2src device=/dev/video2 ! videoconvert ! autovideosink
+```
+
+Neither needs a device picker, which sidesteps the enumeration problem
+entirely. Do not open the C920 itself — the daemon holds it and any app
+trying will get `Device or resource busy`. The marks are drawn by ffmpeg as part of the same
 pipeline that reads the camera, so this costs one camera read, not two;
 reading it twice is impossible anyway.
 
