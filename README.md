@@ -164,19 +164,22 @@ Two values decide whether a scan comes out at the right scale:
 - **`rig.coverage_mm`** — the physical area the frame actually covers at rig
   height. Put a ruler under the camera and measure it. This is what maps an
   eSCL scan region onto the sensor.
-- **`capture.focus.absolute`** — measure it, do not guess:
+- **`capture.focus`** — leave it on autofocus, which is the default. The
+  camera focuses itself well at rig distances, and the fixed value this
+  project used to ship was measurably softer than what autofocus picks. Pin
+  it only if you actually observe hunting between pages. If you need a
+  number:
 
 ```bash
 camscan-escl --focus-sweep
 ```
 
-  That scores real captures and prints the settings sharpest first. Run it
-  with the rig in its final position and a page underneath — the answer is
-  only true for the distance it was measured at. Stop the daemon first, or it
-  will be holding the camera. If the winner is `0` (infinity) or `255`
-  (closest), the camera is outside its focus range and needs moving rather
-  than a different number; the tool says so. Autofocus left on will hunt
-  between pages, which is why this is pinned at all.
+  That scores real captures, sharpest first. Run it with the rig in its final
+  position and a page underneath — the answer is only true for the distance
+  it was measured at — and stop the daemon first, or it will be holding the
+  camera. Treat the scores sceptically: variance of the Laplacian rewards
+  noise as much as detail, so look at the frames rather than trusting the
+  ranking, and compare against what autofocus settles on.
 
 - **`capture.exposure`** — off by default, and worth turning on. Left on
   auto, the sensor re-decides every capture: a scan on this rig came back with

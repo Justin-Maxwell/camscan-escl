@@ -103,9 +103,6 @@ def apply_exposure(cfg: CaptureConfig) -> None:
 def apply_focus(cfg: CaptureConfig) -> None:
     """Pin focus before capture. Best-effort: a failure here is not fatal."""
     focus = cfg.focus
-    if not focus.disable_autofocus:
-        return
-
     available = _v4l2_controls(focus.device, cfg.timeout_s)
 
     auto = next((c for c in AUTOFOCUS_CONTROLS if c in available), None)
@@ -114,10 +111,19 @@ def apply_focus(cfg: CaptureConfig) -> None:
         log.warning("no autofocus control found on %s; leaving focus alone", focus.device)
 
     steps = []
-    if auto:
-        steps.append(f"{auto}=0")
-    if absolute:
-        steps.append(f"{absolute}={focus.absolute}")
+    if not focus.disable_autofocus:
+        # Turn autofocus back ON, rather than returning and leaving whatever
+        # the control happened to hold. V4L2 settings persist on the device
+        # across processes, so anything that once pinned focus -- an earlier
+        # config, a sweep, a stray v4l2-ctl -- would otherwise leave the
+        # camera stuck at that value with nothing in the config to explain it.
+        if auto:
+            steps.append(f"{auto}=1")
+    else:
+        if auto:
+            steps.append(f"{auto}=0")
+        if absolute:
+            steps.append(f"{absolute}={focus.absolute}")
 
     _set_controls(focus.device, steps, cfg.timeout_s, "focus")
 
@@ -139,10 +145,14 @@ def focus_sweep(cfg: CaptureConfig, values: list[int]) -> list[tuple[int, float]
     """Score each focus setting on a real capture, sharpest first.
 
     Run this with the rig in its final position and a real page underneath:
-    the answer is only true for the distance it was measured at. `absolute=0`
-    is infinity on this camera and 255 is closest, so a winner at 0 means the
-    subject is beyond the near-focus range -- move the camera, do not just
-    take the number.
+    the answer is only true for the distance it was measured at.
+
+    Treat the numbers with suspicion. Variance of the Laplacian rewards noise
+    as much as detail, so a grainier frame can outscore a sharper one, and a
+    nearly flat spread across the range means the differences are not about
+    focus at all. Look at the frames before believing the ranking, and check
+    it against what the camera's own autofocus settles on -- on the rig this
+    was written for, autofocus chose the value the sweep ranked first.
     """
     scored = []
     for value in values:

@@ -20,7 +20,7 @@ def test_example_config_parses_and_validates():
     cfg = config_mod.load(EXAMPLE)
     assert cfg.server.port == 8090
     assert cfg.capture.native_width == 2304
-    assert cfg.capture.focus.absolute == 40
+    assert cfg.capture.focus.disable_autofocus is False
     assert cfg.rig.coverage_mm == (210.0, 297.0)
     assert cfg.source_path == EXAMPLE
 
@@ -72,3 +72,10 @@ def test_exposure_lock_is_off_by_default_and_parses_when_set(tmp_path):
     assert exposure.lock is True
     assert exposure.time_absolute == 120
     assert exposure.white_balance_temperature == 4000
+
+
+def test_autofocus_is_the_default():
+    # A wrong fixed focus is unconditionally bad; autofocus hunting is only a
+    # risk. The value that used to ship here was measurably softer than what
+    # the camera picks for itself, and nothing had ever checked.
+    assert config_mod.Config().capture.focus.disable_autofocus is False

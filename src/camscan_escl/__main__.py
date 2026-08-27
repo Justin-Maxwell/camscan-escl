@@ -72,13 +72,22 @@ def main(argv: list[str] | None = None) -> int:
         for value, score in ranked:
             print(f"  focus.absolute = {value:<4} sharpness {score:9.1f}")
         best = ranked[0][0]
-        print(f"\nPut this in [capture.focus]:  absolute = {best}")
-        if best == 0:
-            print("0 is infinity on this camera: the subject is beyond its near\n"
-                  "focus range, so move the camera closer rather than settling.")
-        elif best == max(values):
-            print(f"{best} is the closest this camera focuses, so the subject may\n"
-                  "be nearer than it can manage. Try moving the camera back.")
+        print(f"\nSharpest: absolute = {best}")
+        print(
+            "\nBefore pinning it, check autofocus is not already better --\n"
+            "it is the default for good reason, and it picked the sharpest\n"
+            "setting on the rig this was written for:\n"
+            "  v4l2-ctl -d %s -c focus_automatic_continuous=1\n"
+            "  # capture something, then:\n"
+            "  v4l2-ctl -d %s -C focus_absolute\n"
+            "Pin it only if autofocus hunts between pages."
+            % (cfg.capture.focus.device, cfg.capture.focus.device)
+        )
+        print(
+            "\nNote the scores are variance-of-Laplacian, which rewards noise\n"
+            "as well as detail: a flat spread across the range means the\n"
+            "differences are not really about focus. Look at the frames."
+        )
         return 0
 
     stream = preview.PreviewStream(cfg)

@@ -71,8 +71,13 @@ lock = false
 
 [capture.focus]
 device = "/dev/video0"
-absolute = 40               # from a one-off sweep at the rig's working distance
-disable_autofocus = true
+# Autofocus by default. The spec pins focus because autofocus can hunt
+# between pages -- a real risk, but conditional, whereas a wrong fixed value
+# is always wrong. The 40 that used to ship here was measurably softer than
+# what the camera chooses for itself. Pin it only if you see hunting, and get
+# the number from `camscan-escl --focus-sweep`.
+disable_autofocus = false
+absolute = 0                # only used when disable_autofocus = true
 
 [rig]
 # The physical area the frame covers at rig height, in mm, [width, height],

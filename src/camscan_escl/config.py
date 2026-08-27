@@ -33,9 +33,23 @@ class ScannerConfig:
 
 @dataclass(frozen=True)
 class FocusConfig:
+    """Autofocus by default. Pin it only if you have a reason.
+
+    The spec pins focus on the grounds that autofocus hunts between pages.
+    That is a real failure mode, but it is conditional, and a wrong fixed
+    value is unconditionally bad -- the shipped guess of 40 was measurably
+    softer than what the camera's own autofocus chooses for this rig, and
+    nothing had ever checked. Autofocus is right by default and pinning is
+    the informed exception, not the other way round.
+
+    If you do pin it, get the number from `--focus-sweep`, and sanity-check
+    it against what autofocus picks: enable autofocus, capture, then read
+    `v4l2-ctl -d /dev/video0 -C focus_absolute`.
+    """
+
     device: str = "/dev/video0"
-    absolute: int = 40
-    disable_autofocus: bool = True
+    absolute: int = 0
+    disable_autofocus: bool = False
 
 
 @dataclass(frozen=True)
