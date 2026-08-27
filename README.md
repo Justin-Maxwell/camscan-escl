@@ -147,8 +147,9 @@ camscan-escl-gui
 ```
 
 A live view with the controls beside it: frame coverage in mm, nudge buttons,
-and checkboxes for which paper sizes to draw. Changes apply immediately —
-the daemon rebuilds its filter chain and the picture updates — and persist to
+and checkboxes for which paper sizes to draw. There is no Apply button:
+every control applies itself, the daemon rebuilds its filter chain, the
+picture updates, and the setting persists to
 `~/.config/camscan-escl/adjustments.json`. That file is written by the GUI
 and is separate from your `config.toml` on purpose: generated output must not
 overwrite a file whose comments carry the reasoning. Delete it to fall back.
@@ -156,18 +157,38 @@ overwrite a file whose comments carry the reasoning. Delete it to fall back.
 This is how you calibrate `rig.coverage_mm`, the measurement every scan's
 scale depends on. Put a real sheet under the camera, adjust until its mark
 sits on the sheet's edges, and it is measured rather than guessed. The ±%
-buttons scale width and height together, which is what raising or lowering
-the camera does.
+buttons change the width; the height follows, because it is fixed by the
+shape of the frame — a coverage of a different shape means every scan comes
+out stretched, which is not a choice worth offering.
+
+**Landscape** lays the marks across the frame. Nothing is rotated: eSCL has
+no orientation field, a landscape scan simply *is* a region wider than it is
+tall, and NAPS2 can define one as a custom page size. Tick it and ask the
+client for the landscape size — if the two disagree you get a correctly
+sized image of the wrong area.
 
 It speaks to the daemon over HTTP, so it never touches the camera and runs
 fine from another machine with `--url http://<host>:8090`.
 
-**It needs PyGObject**, which ships with a Fedora desktop but is not in a
-plain venv — deliberately not a dependency, since the daemon must run
-headless without a GUI stack. From a venv that lacks it:
+**It needs PyGObject**, which ships with a Fedora desktop but is not a
+dependency of this package — the daemon must stay able to run headless
+without a GUI stack, so it is not pulled in. A venv therefore cannot see it
+unless it was built to:
 
 ```bash
-PYTHONPATH=src python3 -m camscan_escl.gui
+uv venv --system-site-packages
+```
+
+An existing venv can be converted by setting
+`include-system-site-packages = true` in its `pyvenv.cfg`. Then reinstall, so
+the entry point is generated, and put it on PATH:
+
+```bash
+uv pip install -e .
+```
+
+```bash
+ln -s "$PWD/.venv/bin/camscan-escl-gui" ~/.local/bin/camscan-escl-gui
 ```
 
 ### Crop marks inside Kamoso, or any webcam app
