@@ -98,6 +98,7 @@ class Window(Gtk.ApplicationWindow):
         self._applying = False
         self._frame = (2304, 1536)   # replaced by the daemon's real value
         self._apply_timer = None
+        self._rotate = 0             # capture.rotate_deg, from the daemon
 
         # Paned, not Box. In a Box the sidebar took two thirds of the width
         # and left the video a thumbnail, even with hexpand False on the
@@ -292,7 +293,13 @@ class Window(Gtk.ApplicationWindow):
         if self._applying:
             return
         fw, fh = self._frame
-        if self.landscape_check.get_active():
+        # NOT swapped for the Landscape tick. That only lays the marks across
+        # the frame; the camera's field of view is the same physical area
+        # either way. Swapping here made the coverage portrait-shaped against
+        # a landscape frame and stretched every scan 2.25x. Only a physically
+        # turned camera -- capture.rotate_deg -- changes which way round the
+        # frame is.
+        if self._rotate % 180 == 90:
             fw, fh = fh, fw
         # Always locked. With the camera square-on a millimetre is the same
         # number of pixels in both directions, so a coverage of a different
@@ -367,6 +374,7 @@ class Window(Gtk.ApplicationWindow):
             active = {p[0] for p in data["papers"]}
             for name, check in self.paper_checks.items():
                 check.set_active(name in active)
+            self._rotate = int(data.get("rotate_deg", 0))
             self.landscape_check.set_active(bool(data.get("landscape", False)))
             anchor = data.get("anchor", "center")
             if anchor in self.anchor_buttons:
@@ -395,6 +403,7 @@ class Window(Gtk.ApplicationWindow):
 
     def _apply_now(self) -> bool:
         self._apply_timer = None
+        self._rotate = 0             # capture.rotate_deg, from the daemon
         self._on_apply(None)
         return False
 

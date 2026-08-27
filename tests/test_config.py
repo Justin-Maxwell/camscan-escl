@@ -134,3 +134,39 @@ def test_matching_coverage_aspect_is_quiet(caplog):
     with caplog.at_level(logging.WARNING):
         config_mod.validate(cfg)
     assert not [r for r in caplog.records if "stretched" in r.getMessage()]
+
+
+def test_landscape_marks_do_not_change_the_required_coverage_shape(caplog):
+    # The camera sees the same physical area whichever way the marks are
+    # drawn, so preview.landscape must not enter the aspect rule. It did, and
+    # made the coverage portrait-shaped against a landscape frame: a 2.25x
+    # stretch on every scan, with the GUI reporting no problem because it had
+    # made the same mistake. Only a physically turned camera counts.
+    import logging
+    from dataclasses import replace
+
+    base = config_mod.Config()
+    good = replace(base, rig=replace(base.rig, coverage_mm=(300.0, 200.0)))
+
+    for landscape in (False, True):
+        cfg = replace(good, preview=replace(good.preview, landscape=landscape))
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            config_mod.validate(cfg)
+        assert not [r for r in caplog.records if "stretched" in r.getMessage()], \
+            f"landscape={landscape} changed the verdict on a correct coverage"
+
+
+def test_a_turned_camera_does_change_it(caplog):
+    # capture.rotate_deg is the real thing: with the camera on its side the
+    # frame genuinely is portrait, so a portrait coverage is then correct.
+    import logging
+    from dataclasses import replace
+
+    base = config_mod.Config()
+    cfg = replace(base,
+                  rig=replace(base.rig, coverage_mm=(200.0, 300.0)),
+                  capture=replace(base.capture, rotate_deg=90))
+    with caplog.at_level(logging.WARNING):
+        config_mod.validate(cfg)
+    assert not [r for r in caplog.records if "stretched" in r.getMessage()]
