@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
 from pathlib import Path
 
@@ -58,6 +59,17 @@ def main(argv: list[str] | None = None) -> int:
     if cfg.discovery.enable and not args.no_discovery:
         advertiser = discovery.Advertiser(cfg)
         advertiser.start()
+
+    # Turn SIGTERM into the same exception Ctrl-C raises, so the `finally`
+    # below actually runs. Without this, `systemctl restart` kills the process
+    # outright, the advertisement is never withdrawn, and the PTR lingers in
+    # every cache on the link for its full 4500-second TTL. Those ghosts are
+    # not cosmetic: a browsing client finds an instance that no longer answers
+    # SRV or TXT, and `avahi-browse` reports "Failed to resolve ... Timeout".
+    def _terminate(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _terminate)
 
     try:
         httpd.serve_forever()
