@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import shlex
+import statistics
 import subprocess
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from .config import CaptureConfig
 
@@ -121,10 +122,52 @@ def apply_focus(cfg: CaptureConfig) -> None:
     _set_controls(focus.device, steps, cfg.timeout_s, "focus")
 
 
-def grab(cfg: CaptureConfig) -> Image.Image:
+def sharpness(image: Image.Image) -> float:
+    """Variance of the Laplacian: the standard focus metric, higher is sharper.
+
+    Scored on the centre half only. The edges of the frame carry whatever is
+    on the desk, and clutter reads as detail.
+    """
+    grey = image.convert("L")
+    w, h = grey.size
+    grey = grey.crop((w // 4, h // 4, w * 3 // 4, h * 3 // 4))
+    lap = grey.filter(ImageFilter.Kernel((3, 3), [0, 1, 0, 1, -4, 1, 0, 1, 0], scale=1))
+    return statistics.pvariance(list(lap.get_flattened_data()))
+
+
+def focus_sweep(cfg: CaptureConfig, values: list[int]) -> list[tuple[int, float]]:
+    """Score each focus setting on a real capture, sharpest first.
+
+    Run this with the rig in its final position and a real page underneath:
+    the answer is only true for the distance it was measured at. `absolute=0`
+    is infinity on this camera and 255 is closest, so a winner at 0 means the
+    subject is beyond the near-focus range -- move the camera, do not just
+    take the number.
+    """
+    scored = []
+    for value in values:
+        _set_controls(
+            cfg.focus.device,
+            [f"{c}=0" for c in AUTOFOCUS_CONTROLS[:1]] + [f"focus_absolute={value}"],
+            cfg.timeout_s,
+            "focus sweep",
+        )
+        try:
+            frame = grab(cfg, apply_settings=False)
+        except CaptureError as exc:
+            log.warning("focus %d: capture failed: %s", value, exc)
+            continue
+        score = sharpness(frame)
+        log.info("focus %3d: sharpness %9.1f", value, score)
+        scored.append((value, score))
+    return sorted(scored, key=lambda pair: pair[1], reverse=True)
+
+
+def grab(cfg: CaptureConfig, apply_settings: bool = True) -> Image.Image:
     """Run the configured capture command and load the frame it wrote."""
-    apply_focus(cfg)
-    apply_exposure(cfg)
+    if apply_settings:
+        apply_focus(cfg)
+        apply_exposure(cfg)
 
     with tempfile.TemporaryDirectory(prefix="camscan-") as tmp:
         out = Path(tmp) / "frame.jpg"

@@ -94,8 +94,9 @@ and the fault is not in what we advertise. Established by packet capture:
   captured frames NAPS2 never opens a socket to port 8090.
 
 So the daemon is discoverable and NAPS2's mDNS client does not act on it.
-Manual IP works and is the supported route. Captures are in `PacketTrace/`
-if anyone wants to take this upstream.
+Manual IP works and is the supported route. The packet captures behind this
+are kept locally and not published — they record a home LAN, neighbouring
+devices included. Ask if you want them for an upstream report.
 
 **`server.bind` gates who can use it, and it gates discovery too.** At the
 default `127.0.0.1` the advert carries `127.0.0.1`. `sane-airscan` tolerates
@@ -163,8 +164,19 @@ Two values decide whether a scan comes out at the right scale:
 - **`rig.coverage_mm`** — the physical area the frame actually covers at rig
   height. Put a ruler under the camera and measure it. This is what maps an
   eSCL scan region onto the sensor.
-- **`capture.focus.absolute`** — from a one-off focus sweep at the working
-  distance. Autofocus left on will hunt between pages.
+- **`capture.focus.absolute`** — measure it, do not guess:
+
+```bash
+camscan-escl --focus-sweep
+```
+
+  That scores real captures and prints the settings sharpest first. Run it
+  with the rig in its final position and a page underneath — the answer is
+  only true for the distance it was measured at. Stop the daemon first, or it
+  will be holding the camera. If the winner is `0` (infinity) or `255`
+  (closest), the camera is outside its focus range and needs moving rather
+  than a different number; the tool says so. Autofocus left on will hunt
+  between pages, which is why this is pinned at all.
 
 - **`capture.exposure`** — off by default, and worth turning on. Left on
   auto, the sensor re-decides every capture: a scan on this rig came back with

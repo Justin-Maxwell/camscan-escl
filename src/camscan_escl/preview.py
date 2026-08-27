@@ -122,6 +122,10 @@ class PreviewStream:
         self._seq = 0
         self._cond = threading.Condition()
         self._running = False
+        # True while the camera is lent out for a capture. Distinguishes "back
+        # shortly" from "stopped", which is the difference between an open
+        # MJPEG response waiting and an open MJPEG response ending.
+        self._paused = False
         # Held for the whole of a capture, so two scans cannot race each
         # other into restarting the stream underneath one another.
         self._camera = threading.RLock()
@@ -195,12 +199,20 @@ class PreviewStream:
         """
         with self._camera:
             was_running = self._running
+            with self._cond:
+                self._paused = was_running
+                self._cond.notify_all()
             self._stop_locked()
             try:
                 yield
             finally:
-                if was_running:
-                    self._start_locked()
+                try:
+                    if was_running:
+                        self._start_locked()
+                finally:
+                    with self._cond:
+                        self._paused = False
+                        self._cond.notify_all()
 
     # -- frames ---------------------------------------------------------
 
@@ -252,16 +264,30 @@ class PreviewStream:
                 self._cond.wait(timeout)
             return self._latest
 
-    def frames(self, timeout: float = 5.0):
-        """Yield each new frame as it arrives, for the MJPEG endpoint."""
+    def frames(self, stall_timeout: float = 60.0):
+        """Yield each new frame as it arrives, for the MJPEG endpoint.
+
+        Survives a scan. The camera is handed over for several seconds during
+        a capture, and an MJPEG response that ends there is not resumed by the
+        browser -- the preview simply goes dead until the page is reloaded,
+        which is what it used to do. So while the stream is paused this waits
+        rather than returning, and only gives up once the stream has genuinely
+        stopped, or nothing has arrived for `stall_timeout`.
+        """
         last = -1
+        waited = 0.0
         while True:
             with self._cond:
-                if self._seq == last:
-                    if not self._cond.wait(timeout):
+                while self._seq == last or self._latest is None:
+                    if not (self._running or self._paused):
                         return
-                if self._latest is None:
-                    return
+                    if not self._cond.wait(1.0):
+                        waited += 1.0
+                        if waited >= stall_timeout:
+                            return
+                    else:
+                        waited = 0.0
+                waited = 0.0
                 last = self._seq
                 frame = self._latest
             yield frame

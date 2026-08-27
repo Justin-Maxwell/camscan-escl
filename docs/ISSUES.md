@@ -12,7 +12,9 @@ Close an item by deleting it and saying so in the commit message.
 **Workaround:** Manual IP, which works
 
 NAPS2's ESCL device search never contacts this daemon, though everything its
-own code requires is present. Evidence, from `PacketTrace/`:
+own code requires is present. The evidence is three packet captures, kept
+locally and **not published** — they record this host's LAN traffic including
+neighbouring devices, and have not been vetted for that. Summarised:
 
 - `three.pcapng` — NAPS2 queries `_uscan._tcp` every 2 s over IPv4 and IPv6;
   we answer in ~30 ms with PTR + TXT + SRV + A. No connection to 8090 in 274

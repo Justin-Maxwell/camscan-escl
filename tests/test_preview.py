@@ -80,3 +80,68 @@ def test_page_reports_what_the_preview_cannot_show():
     assert "/preview/stream" in html
     for name in ("A4", "A5", "Letter"):
         assert name in html
+
+
+class _FakeStream(preview.PreviewStream):
+    """A PreviewStream with the camera replaced by pushed frames."""
+
+    def _start_locked(self):
+        self._running = True
+        return True
+
+    def _stop_locked(self):
+        self._running = False
+        with self._cond:
+            self._latest = None
+            self._cond.notify_all()
+
+    def push(self, data):
+        with self._cond:
+            self._latest = data
+            self._seq += 1
+            self._cond.notify_all()
+
+
+def test_open_stream_survives_a_scan():
+    # Regression: `released()` used to blank the latest frame, the generator
+    # saw None and returned, the MJPEG response ended -- and a browser does
+    # not reconnect a broken <img> stream, so the preview stayed dead until
+    # the page was reloaded. A single-frame fetch resumed fine, which is why
+    # this was missed.
+    import threading
+
+    stream = _FakeStream(Config())
+    stream.start()
+    stream.push(b"one")
+
+    got, done = [], threading.Event()
+
+    def consume():
+        for frame in stream.frames(stall_timeout=10.0):
+            got.append(frame)
+            if len(got) == 2:
+                break
+        done.set()
+
+    reader = threading.Thread(target=consume, daemon=True)
+    reader.start()
+
+    with stream.released():
+        pass  # a scan happens here: camera gone, then back
+
+    stream.push(b"two")
+    assert done.wait(10.0), "stream ended during the scan instead of waiting"
+    assert got == [b"one", b"two"]
+
+
+def test_stream_ends_when_the_preview_really_stops():
+    # The flip side: waiting through a pause must not mean hanging forever
+    # once the preview is genuinely shut down.
+    stream = _FakeStream(Config())
+    stream.start()
+    stream.push(b"one")
+    frames = stream.frames(stall_timeout=10.0)
+    assert next(frames) == b"one"
+    stream.stop()
+    with pytest.raises(StopIteration):
+        next(frames)

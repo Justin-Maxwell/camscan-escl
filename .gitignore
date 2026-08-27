@@ -7,6 +7,11 @@ build/
 dist/
 *.egg-info/
 
+# Packet captures from debugging the NAPS2 discovery problem. Deliberately
+# not published: they are a recording of this host's LAN traffic, including
+# neighbouring devices, and nobody vetted them for that.
+/PacketTrace/
+
 # Scan output from manual testing
 /scratch/
 *.jpg

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import config as config_mod
-from . import discovery, preview
+from . import capture, discovery, preview
 from .server import serve
 
 
@@ -26,6 +26,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="do not hold the camera for the live preview")
     parser.add_argument("--print-avahi-service", action="store_true",
                         help="print a static Avahi service file and exit")
+    parser.add_argument("--focus-sweep", nargs="?", const="0,5,10,20,40,80,160,255",
+                        metavar="VALUES",
+                        help="score focus settings on real captures and exit. "
+                             "Run it with the rig in its final position and a "
+                             "page underneath; the answer is only true for the "
+                             "distance it was measured at.")
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -49,6 +55,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.print_avahi_service:
         print(discovery.avahi_service_xml(cfg), end="")
+        return 0
+
+    if args.focus_sweep:
+        try:
+            values = [int(v) for v in args.focus_sweep.replace(",", " ").split()]
+        except ValueError:
+            print("camscan-escl: --focus-sweep takes numbers, e.g. 0,20,40",
+                  file=sys.stderr)
+            return 2
+        ranked = capture.focus_sweep(cfg.capture, values)
+        if not ranked:
+            print("camscan-escl: no capture succeeded", file=sys.stderr)
+            return 1
+        print("\nsharpest first:")
+        for value, score in ranked:
+            print(f"  focus.absolute = {value:<4} sharpness {score:9.1f}")
+        best = ranked[0][0]
+        print(f"\nPut this in [capture.focus]:  absolute = {best}")
+        if best == 0:
+            print("0 is infinity on this camera: the subject is beyond its near\n"
+                  "focus range, so move the camera closer rather than settling.")
+        elif best == max(values):
+            print(f"{best} is the closest this camera focuses, so the subject may\n"
+                  "be nearer than it can manage. Try moving the camera back.")
         return 0
 
     stream = preview.PreviewStream(cfg)

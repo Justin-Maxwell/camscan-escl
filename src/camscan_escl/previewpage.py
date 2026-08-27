@@ -77,6 +77,23 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
   <svg viewBox="0 0 {w} {h}" preserveAspectRatio="none">{''.join(shapes)}</svg>
 </div>
 <ul>{''.join(legend)}</ul>
+<script>
+  // Belt and braces. The server now holds an MJPEG response open across a
+  // scan, but a stream can still die -- daemon restart, network blip -- and
+  // a browser never retries a broken <img> stream on its own. Without this
+  // the preview goes dead until someone reloads the page.
+  (function () {{
+    var img = document.querySelector('.stage img');
+    var retry = null;
+    img.addEventListener('error', function () {{
+      if (retry) return;
+      retry = setTimeout(function () {{
+        retry = null;
+        img.src = '/preview/stream?r=' + Date.now();
+      }}, 1500);
+    }});
+  }})();
+</script>
 <p class="note">
   Marks show where each paper size lands, given
   <code>rig.coverage_mm = [{cfg.rig.coverage_mm[0]:g}, {cfg.rig.coverage_mm[1]:g}]</code>.
