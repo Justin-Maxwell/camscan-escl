@@ -25,12 +25,35 @@ resolution_dpi = 150        # declare only what the rig can actually deliver
 jpeg_quality = 88
 
 [capture]
+# HOW TO FIND THE CAMERA. Deliberately not a /dev/videoN number.
+#
+# Those numbers are handed out in probe order and move between boots. On the
+# rig this was written for, v4l2loopback is autoloaded with no `video_nr=` and
+# races USB enumeration for the first free node; on 2026-08-29 it won, took
+# /dev/video0, and a config pinned to the previous boot spent half an hour
+# reading from the loopback and writing to the camera's metadata node.
+#
+#   auto                      first node that can capture video (skips
+#                             loopbacks, which would otherwise be this
+#                             daemon's own output)
+#   card:HD Pro Webcam C920   named by card, which is exact
+#   /dev/video1               a literal path; checked, and refused with an
+#                             explanation if it is the wrong kind of device
+#
+# `camscan-escl --diagnose` prints every node and what each setting resolves
+# to. Cards are matched case-insensitively, and a substring is enough.
+device = "auto"
+
 # ffmpeg, not fswebcam. 2304x1536 exists only in YUYV on the C920, and
 # fswebcam negotiates MJPG and silently returns 1920x1080 -- measured on this
 # host, exactly the failure spec section 8 warns about. ffmpeg pins the pixel
 # format, so it actually gets the still mode. The daemon logs loudly if a
 # capture comes back at the wrong size either way.
-command = "ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 -video_size 2304x1536 -i /dev/video0 -frames:v 3 -update 1 -y %f"
+#
+# %d is the device resolved from `device` above; %f is the output path. A
+# command with no %d is run exactly as written, so an existing hand-rolled
+# one still works -- it just keeps whatever number is baked into it.
+command = "ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 -video_size 2304x1536 -i %d -frames:v 3 -update 1 -y %f"
 native_width = 2304
 native_height = 1536
 timeout_s = 30
@@ -38,7 +61,7 @@ rotate_deg = 0              # 90 or 270 if the camera is mounted portrait
 
 # The fswebcam form from the spec, kept for reference. Verify the output size
 # before trusting it:
-# command = "fswebcam -d /dev/video0 -r 2304x1536 --no-banner -S 4 --jpeg 92 %f"
+# command = "fswebcam -d %d -r 2304x1536 --no-banner -S 4 --jpeg 92 %f"
 
 [preview]
 # A live preview at http://<host>:8090/preview with crop marks showing where
@@ -54,22 +77,60 @@ width = 1280
 height = 720
 fps = 15
 
-# Shrink the picture when a crop mark would otherwise fall entirely outside
-# it. A paper bigger than the coverage has all four edges off-screen, so it
-# draws nothing at all -- exactly when it most needs to be seen, because it
-# is telling you the paper does not fit and the camera needs raising.
+# Extend the picture further still, for a sheet larger than the camera can
+# capture AT ALL, so its mark can be seen rather than clipped at the edge.
+#
+# This is a third zone beyond the two the frame already carries. The published
+# frame is the scannable area and the live stream sits inside it; this is for
+# paper that runs past even the scannable area. Only on the sides it actually
+# overflows -- the anchor holds a mark flush against the edge it names, so that
+# side never overflows and never gets an extension.
 fit_marks = true
+
+# Show the last scan, faintly, in the border.
+#
+# The scan captures the whole still and the preview is a 16:9 crop of it, so
+# the border is not empty space -- it is space the SCANNER reaches and the live
+# view cannot.
+#
+# The captured still is kept unrotated alongside the composited overlay, so a
+# settings change REDRAWS the border rather than blanking it: ticking a paper
+# size or turning the camera moves where the still belongs, but the still is a
+# photograph of the desk and stays true. No rescan needed.
+scan_ghost = true
+# How much of it shows through, 0 invisible to 1 full strength. Faint on
+# purpose: it is a still, and must never be mistaken for the live view.
+scan_ghost_opacity = 0.38
+
+# The most of the frame that may become border, as a fraction. Past this the
+# overflow clips instead, because a border wide enough to swallow the picture
+# tells you less about where the paper goes than a clipped mark does. The
+# sidebar reports the overflow in millimetres either way.
+max_pad = 0.35
 
 # Publish the marked-up video as a virtual webcam, so Kamoso, Cheese or a
 # video call shows the crop marks burned in. Needs the v4l2loopback module --
 # see README. Empty means the preview is web-only.
-# loopback_device = "/dev/video9"
+#
+# Takes the same forms as capture.device, and name it the same way and for the
+# same reason: the loopback's number moves between boots too. The card name is
+# whatever `card_label` its modprobe options set.
+# loopback_device = "card:OBS Virtual Camera"
 
 [preview.papers]
 # name = [width_mm, height_mm]
 A4 = [210.0, 297.0]
 A5 = [148.0, 210.0]
 Letter = [215.9, 279.4]
+
+[capture.image]
+# Brightness and contrast, as V4L2 controls on the camera -- so a scan gets
+# the picture the preview showed. Unset leaves the camera alone. The settings
+# window drives these, and its Auto button meters the live picture and fills
+# them in. The C920 takes 0..255 for both, defaulting to 128, but the daemon
+# reads the real range off whatever camera is attached.
+# brightness = 128
+# contrast = 128
 
 [capture.exposure]
 # Off by default: the right numbers are rig-specific, and a wrong pinned
@@ -81,7 +142,9 @@ lock = false
 # white_balance_temperature = 4000 # kelvin; stops paper going blue or orange
 
 [capture.focus]
-device = "/dev/video0"
+# No `device` here on purpose: unset means "follow capture.device", which is
+# what you want unless the focus controls live on a different node than the
+# capture. It takes the same forms as capture.device if you do set it.
 # Autofocus by default. The spec pins focus because autofocus can hunt
 # between pages -- a real risk, but conditional, whereas a wrong fixed value
 # is always wrong. The 40 that used to ship here was measurably softer than

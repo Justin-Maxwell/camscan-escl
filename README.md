@@ -161,10 +161,74 @@ buttons change the width; the height follows, because it is fixed by the
 shape of the frame — a coverage of a different shape means every scan comes
 out stretched, which is not a choice worth offering.
 
-**When a paper does not fit**, the picture shrinks into the middle and the
-mark is drawn on the padding around it. Otherwise a size larger than the
-coverage has all four edges off-screen and draws nothing, which reads as "not
-enabled" rather than "does not fit". Turn it off with `fit_marks = false`.
+**The published frame is the scannable area, not the camera's streaming mode.**
+853×1280 here against a 720×1280 stream. The still reaches further than any
+streaming mode can — a 16:9 stream of a 3:2 still is the full width with a
+centred crop — so a frame the size of the stream can only ever show part of
+what a scan captures.
+
+That gives three zones, and they nest:
+
+| zone | what it is | what fills it |
+|---|---|---|
+| stream | what the camera sends live, 720×1280 | live video, never resampled |
+| scannable | the whole still, 853×1280 — the canvas | the last scan, faintly |
+| extension | beyond the camera entirely | padding, only when a sheet overflows |
+
+The scannable area is a fixed property of the camera, so **the border never
+changes size when you change paper sizes**. Only a sheet larger than the
+camera can capture at all moves anything, and then only on the side it
+overflows.
+
+**The anchor moves the marks, never the picture,** and it anchors against the
+whole coverage — which is the scannable area, all of which is now on screen.
+An edge-anchored scan therefore uses the whole sensor.
+
+**When a paper does not fit**, the picture shrinks and a border appears —
+but only on the sides the marks actually run off. The anchored edge never
+overflows, so it never gets one: the video stays flush against exactly the
+edge you are lining paper up against, and the border is opposite, where the
+oversized sheet is spilling. Its width is the size of the spill, so the
+overflowing edge is drawn on it and can be seen.
+
+**The border carries the last scan, faintly.** The border is not empty space —
+it is space the *scanner* reaches and the live view cannot. After every scan
+the captured frame is washed back towards the padding and composited across
+the whole canvas, so the border says what is actually out there instead of
+being a blank margin.
+
+It fills that region exactly, always. The camera has not moved, so the still
+maps onto the scannable area precisely — which means the ghost survives every
+settings change and is never conditional on a paper size overflowing. It is a
+still and does not move with the page; that is why it is faint rather than
+shown as picture.
+
+The dead-zone dimming is clipped to the live picture and deliberately kept
+*off* the border. Dimming means "the camera sees this but no scan can reach
+it"; the border is the opposite, and greying it would wash out the very thing
+it exists to carry.
+
+Two files are kept: the captured still, unrotated, and the overlay composited
+from it. A settings change moves where the still *belongs*, but it does not
+make the still wrong — it is a photograph of the desk. So the overlay is
+**redrawn** from the stored still, not discarded: tick a paper size, drag the
+coverage or turn the camera and the border follows, with no rescan. The still
+is stored unrotated precisely so `rotate_deg` can change without invalidating
+it.
+
+The overlay is removed only when there is no border left to fill, so a stale
+one cannot be picked up on the next pipeline restart. Turn the whole thing off
+with `scan_ghost = false`; `scan_ghost_opacity` sets how much shows through.
+
+`preview.max_pad` (default `0.35`) caps the total border as a fraction of the
+frame, so a wildly oversized paper cannot shrink the video to a postage stamp.
+Past the cap the overflow clips instead, and the sidebar still says so in
+millimetres — what the sheet needs against what the camera can see. Set
+`fit_marks = false` for no border at all.
+
+**Sizes that share an edge** are drawn at decreasing thicknesses, largest
+outermost. Anchoring to a corner makes coincident edges the normal case, and
+equal outlines stack so that only the last colour drawn can be seen.
 
 **Landscape** lays the marks across the frame. Nothing is rotated: eSCL has
 no orientation field, a landscape scan simply *is* a region wider than it is
@@ -172,8 +236,67 @@ tall, and NAPS2 can define one as a custom page size. Tick it and ask the
 client for the landscape size — if the two disagree you get a correctly
 sized image of the wrong area.
 
+**Picture** gives brightness and contrast, as V4L2 controls on the camera
+rather than ffmpeg filters — so they reach the scan and not just the preview.
+They apply live, with no pipeline restart. **Auto** meters the picture and
+picks both: brightness by bisection to put paper just below clipping, then a
+bounded scan for the contrast giving the most tonal range without blowing the
+highlights, then brightness again because contrast moved the level. If the
+contrast pass leaves the level worse than brightness alone managed, it is
+reverted — on a scene too dark to reach the target, more contrast buys
+separation by pushing the whole picture further down.
+
+**The Daemon panel** at the bottom says whether the preview is actually working,
+and gives you Start, Stop and Restart. The dot is green only when frames are
+genuinely arriving — not merely when a process was started, which is a
+distinction that cost a session. Open **Details** for what each configured
+device resolved to, every V4L2 node on the machine, and the tail of ffmpeg's
+stderr. Restart re-resolves the device numbers, so it is what to press after
+replugging the camera.
+
+If the daemon is not answering at all, Start falls back to
+`systemctl --user start camscan-escl.service` — but only when the GUI is
+pointed at this machine, since there is nothing to ask on a remote host.
+
 It speaks to the daemon over HTTP, so it never touches the camera and runs
 fine from another machine with `--url http://<host>:8090`.
+
+### When the preview is blank
+
+```bash
+camscan-escl --diagnose
+```
+
+Prints every V4L2 node with its card name and kind, what each configured
+device resolves to, and what the running daemon says about itself. The same
+information is served as JSON at `/preview/status`, and the lifecycle verbs
+are `POST /preview/start`, `/preview/stop` and `/preview/restart`.
+
+**Device numbers are not stable across boots**, which is the failure this was
+built for. `v4l2loopback` is autoloaded on this host with no `video_nr=`, so
+it races USB enumeration for the first free node; on 2026-08-29 it won and
+took `/dev/video0`. A config pinned to the previous boot then had the daemon
+reading from its own loopback and writing to the camera's *metadata* node.
+ffmpeg exited 237 with "Not a video capture device", and because its stderr
+went to `/dev/null` and nothing checked that the child had survived, the unit
+stayed `active (running)` and the journal kept saying `preview streaming
+1280x720`. The only visible symptom was a viewer reconnecting every 31
+seconds — a 30-second socket timeout plus a 1-second retry.
+
+So name devices by what they are:
+
+```toml
+[capture]
+device = "card:HD Pro Webcam C920"
+
+[preview]
+loopback_device = "card:OBS Virtual Camera"
+```
+
+`auto` also works and picks the first node that can do the job, skipping
+loopbacks when choosing a camera. A literal `/dev/videoN` is still accepted,
+but it is now *verified* rather than trusted: point it at the wrong kind of
+device and the daemon says so in a sentence instead of failing silently.
 
 **It needs PyGObject**, which ships with a Fedora desktop but is not a
 dependency of this package — the daemon must stay able to run headless
@@ -221,8 +344,14 @@ Then point the daemon at it and restart:
 ```toml
 [preview]
 enable = true
-loopback_device = "/dev/video9"
+loopback_device = "card:camscan preview"
 ```
+
+Named by `card_label` rather than by number. The `video_nr=9` above pins it
+for a module *you* load, but a distribution package may load v4l2loopback for
+you with no pin at all — Fedora's OBS packaging does, via
+`/usr/lib/modules-load.d/v4l2loopback.conf` — and then the number is whatever
+it won that boot. `/dev/video9` also works if you did set `video_nr`.
 
 **Kamoso does not work for this, and nor does anything else built on
 GStreamer.** Measured: GStreamer's device monitor enumerates only the C920
@@ -236,11 +365,11 @@ happily when named explicitly. It is enumeration that fails, not capture.
 What does work, both pre-installed on Fedora:
 
 ```bash
-ffplay -f v4l2 -window_title "camscan preview" -i /dev/video2
+ffplay -f v4l2 -window_title "camscan preview" -i "$(camscan-escl --print-loopback)"
 ```
 
 ```bash
-gst-launch-1.0 v4l2src device=/dev/video2 ! videoconvert ! autovideosink
+gst-launch-1.0 v4l2src device="$(camscan-escl --print-loopback)" ! videoconvert ! autovideosink
 ```
 
 Neither needs a device picker, which sidesteps the enumeration problem
@@ -300,12 +429,16 @@ camscan-escl --focus-sweep
   later. Sweep for a value that holds mid-grey, then pin it:
 
 ```bash
-for t in 60 90 120 160 220; do v4l2-ctl -d /dev/video0 -c auto_exposure=1 -c exposure_time_absolute=$t; ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 -video_size 2304x1536 -i /dev/video0 -frames:v 3 -update 1 -y /tmp/e$t.png; done
+CAM=$(camscan-escl --print-camera); for t in 60 90 120 160 220; do v4l2-ctl -d "$CAM" -c auto_exposure=1 -c exposure_time_absolute=$t; ffmpeg -loglevel error -f v4l2 -pix_fmt yuyv422 -video_size 2304x1536 -i "$CAM" -frames:v 3 -update 1 -y /tmp/e$t.png; done
 ```
 
   Pick the one where paper is bright but not clipped, put it in
   `time_absolute`, and set `lock = true`. Restore auto with
-  `v4l2-ctl -d /dev/video0 -c auto_exposure=3 -c white_balance_automatic=1`.
+  `v4l2-ctl -d "$(camscan-escl --print-camera)" -c auto_exposure=3 -c white_balance_automatic=1`.
+
+  Stop the preview first — `camscan-escl-gui`'s Stop button, or
+  `curl -X POST localhost:8090/preview/stop` — or the daemon will be holding
+  the camera and every `ffmpeg` above will get `Device or resource busy`.
 
 `scanner.resolution_dpi` should be one the geometry can deliver
 (≈ `3454 / distance_cm`). Declaring more than that would mean upscaling to

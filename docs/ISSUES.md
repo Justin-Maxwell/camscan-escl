@@ -1,7 +1,67 @@
 # Open issues
 
-No git remote on this repo, so this file is the issue tracker. Newest first.
-Close an item by deleting it and saying so in the commit message.
+This file is the issue tracker. Newest first. Close an item by deleting it and
+saying so in the commit message.
+
+(It used to say there was no git remote. There is one now —
+`github.com/Justin-Maxwell/camscan-escl` — but the tracker stays here.)
+
+---
+
+## 10. Next session: the "drop a side" fix
+
+**Status:** agreed in principle, not designed
+**Depends on:** issue 8, which establishes that the camera will not move the
+streamed band
+
+The streamed band is the middle 1296 of the sensor's 1536 rows, fixed and
+centred, so 120 rows on each side are scannable but never visible live. An
+edge-anchored page therefore has its alignment edge in the ghost, not in the
+moving picture.
+
+The fix as understood: **give up one of the two strips**. Define the scannable
+area as the streamed band plus the 120-row strip on ONE side only. The coverage
+edge on the anchored side then coincides with the stream edge, so an
+edge-anchored page is fully visible live — bought with about 8% of the sensor
+on the far side.
+
+> **Confirm the intent before building this.** Justin called it "your 'drop a
+> side' fix", and the above is a reconstruction from the geometry rather than
+> a proposal made in so many words. He also called it "yuk, but meh", which
+> fits throwing away sensor area. Worth thirty seconds of checking rather than
+> a session of building the wrong thing.
+
+---
+
+## 9. Mains frequency is never set, and the camera's default is wrong here
+
+**Status:** open
+**Control:** `power_line_frequency` — 0 Disabled, 1 = 50 Hz, 2 = 60 Hz
+
+Currently reads **1 (50 Hz)**, which is right for New Zealand. But the C920's
+**default is 2 (60 Hz)**, and the daemon never sets it. Nothing here put it on
+50 — something else did, and a replug or a module reload will silently put it
+back to 60, which bands the picture under artificial light at 50 Hz mains.
+
+Same hazard class as issue 8: persistent V4L2 state the daemon depends on and
+does not own. Unlike pan/tilt/zoom this one costs image quality rather than
+geometry, so it will look like a bad camera rather than a bad setting.
+
+Should be pinned alongside focus and exposure, with a config key.
+
+**Autodetection** — Justin's instinct is that it should not need asking, and
+there are two routes:
+
+- *From the host.* `timedatectl` gives `Pacific/Auckland`; most of the world is
+  50 Hz, the Americas and a few others 60. A timezone-to-frequency table is
+  small, static and gets it right nearly everywhere. Cheap, and wrong only for
+  someone running the rig outside their own grid.
+- *From the picture.* Under artificial light a mismatched setting produces
+  banding that beats at the difference frequency. Capture a short run at fixed
+  exposure, look for horizontal periodicity, pick whichever setting has less.
+  Robust and self-correcting, but needs artificial light to decide at all.
+
+The host route is the one to build first; the picture route is the check.
 
 ---
 
@@ -88,7 +148,12 @@ the declared resolution too.
 ## 5. GStreamer will not enumerate the v4l2loopback preview device
 
 **Status:** open, worked around
-**Workaround:** `ffplay -f v4l2 -i /dev/video2`, which does not enumerate
+**Workaround:** `ffplay -f v4l2 -i "$(camscan-escl --print-loopback)"`, which
+does not enumerate
+
+> Device numbers below were written on a boot where the loopback was
+> `/dev/video2`. They move — see `camscan-escl --diagnose` for what they are
+> now, and the "When the preview is blank" section of the README for why.
 
 Kamoso, and anything else built on GStreamer, lists only the real camera and
 never the loopback the preview is published on. Measured with GStreamer's own
@@ -105,6 +170,118 @@ plays it, and ffmpeg reads frames from it. Only enumeration fails.
 Worth trying: publishing more than one frame-rate or a rate *range* on the
 loopback, which may be enough for GStreamer to build valid caps. Whether
 ffmpeg's v4l2 output can advertise that is unknown.
+
+---
+
+## 8. Camera zoom silently invalidates every crop mark
+
+**Status:** open, detected but not prevented
+**Detected by:** `/preview/status`, and the Daemon panel's one-line summary
+
+`zoom_absolute` changes the **streaming** mode's field of view and leaves the
+**still** untouched. Measured on this rig, one setting at a time, cross-
+correlating a streaming frame against the still it was captured beside:
+
+| pan | tilt | zoom | stream sits at row | centred crop predicts |
+|---|---|---|---|---|
+| 0 | 0 | 100 | 65 | 66 |
+| +18000 | 0 | 100 | 67 | 66 |
+| −18000 | 0 | 100 | 67 | 66 |
+| 0 | +18000 | 100 | 67 | 66 |
+| 0 | 0 | **200** | **56** | 66 |
+| **+18000** | 0 | **200** | **52** | 66 |
+
+So at the default zoom of 100 pan and tilt do nothing. At 200 the stream is
+visibly zoomed while the still is pixel-identical, and pan then shifts it
+further.
+
+**Pan has no room; tilt has room and is ignored anyway.** The stream is the
+still's full width, so there is nowhere to pan — but it is only 1296 of 1536
+rows, leaving 240 spare, so tilt could in principle slide the streamed band up
+and down the sensor. It does not. Measured by comparing stream frames against
+each other, which is far more sensitive than measuring each against the still:
+
+| tilt | reads back | vertical shift vs tilt=0 |
+|---|---|---|
+| −36000 | −36000 | 0.0 px |
+| −18000 | −18000 | 0.0 px |
+| +18000 | +18000 | 0.0 px |
+| +36000 | +36000 | 0.0 px |
+
+The control accepts the value and reports it back, the captures are genuinely
+distinct (different checksums, mean absolute difference 7.41 between the
+extremes — sensor noise), and nothing moves.
+
+**Zooming does unlock tilt, and it still does not help.** Tilt engages at
+`zoom_absolute = 105`, the first step above default:
+
+| zoom | tilt travel | field of view retained |
+|---|---|---|
+| 100 | 0 px | 100% |
+| 105 | 32 px | 96% |
+| 110 | 68 px | 91% |
+| 125 | 180 px | 80% |
+| 150 | 104 px | 67% |
+| 200 | 168 px | 56% |
+
+But the crop window is confined to the same band the 1× stream already
+occupies. Located by correlating each frame against the full still:
+
+| frame | covers still rows |
+|---|---|
+| zoom 100, tilt 0 | 120 – 1416 |
+| zoom 125, tilt −36000 | 384 – 1420 |
+| zoom 125, tilt +36000 | 120 – 1156 |
+
+The tilt extremes span rows 120–1420, which is the 1× band to within the
+measurement's granularity. Tilt slides a *smaller* window around inside the
+same active area; it never reaches the 240 rows outside it.
+
+So the appealing idea — tilting the streamed band to sit over whichever edge
+the crop marks are anchored to, so alignment could be watched live instead of
+through the ghost — cannot work. Zooming to unlock tilt costs field of view,
+softens the picture (it is a digital crop, upscaled from fewer sensor pixels),
+shifts the streamed band relative to the still so every crop mark moves, and
+buys no new view in return.
+
+The way to get a page inside the live band is to raise the camera until the
+coverage is wide enough. The band is a fixed 84.375% of the coverage, centred,
+so a sheet is fully live once `coverage_width >= paper_width / 0.84375`:
+249 mm for A4, 256 mm for Letter and Legal. At 256 mm the sensor still
+delivers 152 dpi, above the declared 150.
+
+Every crop mark is placed by the centred-crop relationship between those two
+modes, so a non-default zoom moves the marks and nothing in the pipeline can
+tell. The scan itself is unaffected, which makes it worse: the output is fine
+and the positioning aid lies.
+
+The daemon never sets these controls, but V4L2 state lives on the device and
+survives whatever last touched it — OBS, a stray `v4l2-ctl`, another app.
+
+**Not prevented**, only reported, because resetting them on every capture
+would fight anything else deliberately using the camera zoomed. If that turns
+out to be nobody, pin them alongside focus and exposure.
+
+---
+
+## 7. GTK warns about the brightness/contrast sliders on every start
+
+**Status:** open, cosmetic, believed to be a GTK bug
+**Symptom:** `GtkGizmo (slider) reported min width -2, but sizes must be >= 0`,
+twice, at startup
+
+A `Gtk.Scale` inside a `Gtk.ScrolledWindow` emits it. Narrowed by elimination:
+reproduced with a stock, unconfigured `Gtk.Scale`, and unaffected by the size
+request (none / width only / width and height), by `draw_value`, by `hexpand`,
+by the scroll policy (`NEVER`, `AUTOMATIC`, `EXTERNAL`), and by whether a
+`Gtk.Paned` is involved. It does *not* appear with the same scale outside a
+scroller.
+
+GTK clamps the value to 0 and the sliders lay out and work correctly, so this
+is noise rather than a defect. Dropping the `ScrolledWindow` would remove it,
+but the sidebar is taller than the window and needs to scroll. Worth
+re-checking after a GTK update, and worth reporting upstream with the
+elimination above if it survives one.
 
 ---
 

@@ -29,6 +29,18 @@ gi = pytest.importorskip("gi", reason="PyGObject is not installed")
 if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
     pytest.skip("no display to open a window on", allow_module_level=True)
 
+# OFF unless asked for. These open a real window and present it, which raises
+# it above whatever you were doing and takes the keyboard with it -- once per
+# run, in the middle of your typing. Nothing else in the suite touches the
+# display, so the default `pytest tests/` now leaves the desktop alone.
+#
+#   CAMSCAN_GUI_TESTS=1 python -m pytest tests/test_gui_clickthrough.py
+if os.environ.get("CAMSCAN_GUI_TESTS") != "1":
+    pytest.skip(
+        "opens and focuses a real window; set CAMSCAN_GUI_TESTS=1 to run",
+        allow_module_level=True,
+    )
+
 gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 
@@ -147,6 +159,48 @@ def test_turning_the_camera_flips_the_derived_shape(window):
     now = settings()
     cov, still = now["coverage_mm"], now["still"]
     assert cov[0] / cov[1] == pytest.approx(still[1] / still[0], rel=1e-3)
+
+
+def status() -> dict:
+    with urllib.request.urlopen(f"{BASE}/preview/status", timeout=10) as r:
+        return json.load(r)
+
+
+def test_stop_and_start_buttons_drive_the_daemon(window):
+    """The controls that were missing when the preview died silently.
+
+    Ordered stop-then-start so the fixture leaves the preview running, which
+    is the state every other test in this file needs.
+    """
+    assert status()["running"] is True
+
+    window.stop_button.emit("clicked")
+    pump(3.0)
+    assert status()["running"] is False
+    # The window must SAY so, not merely be right internally.
+    assert "not running" in window.health_label.get_text().lower()
+
+    window.start_button.emit("clicked")
+    pump(9.0)
+    live = status()
+    assert live["running"] is True
+    assert live["healthy"] is True
+    assert "streaming" in window.health_label.get_text().lower()
+
+
+def test_restart_button_brings_the_pipeline_back(window):
+    window.restart_button.emit("clicked")
+    pump(9.0)
+    assert status()["healthy"] is True
+
+
+def test_details_panel_names_the_resolved_devices(window):
+    # The sentence that would have ended the outage in one glance.
+    pump(2.5)
+    text = window.details.get_text()
+    assert "camera:" in text
+    assert "/dev/" in text
+    assert "V4L2 devices:" in text
 
 
 def _walk(widget):

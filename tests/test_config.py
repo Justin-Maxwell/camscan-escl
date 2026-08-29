@@ -120,8 +120,17 @@ def test_mismatched_coverage_aspect_is_warned_about(caplog):
     cfg = replace(config_mod.Config(),
                   rig=replace(config_mod.Config().rig, coverage_mm=(245.8, 336.4)))
     with caplog.at_level(logging.WARNING):
-        config_mod.validate(cfg)
+        config_mod.warn_about_geometry(cfg)
     assert any("stretched" in r.getMessage() for r in caplog.records)
+
+    # And NOT from validate, which runs inside load() -- before the GUI's
+    # saved adjustments are applied. Warning there judged a rotation and a
+    # coverage the daemon would never use, and announced a 2.12x stretch on
+    # every start of a correctly calibrated rig.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        config_mod.validate(cfg)
+    assert not any("stretched" in r.getMessage() for r in caplog.records)
 
 
 def test_matching_coverage_aspect_is_quiet(caplog):
@@ -132,7 +141,7 @@ def test_matching_coverage_aspect_is_quiet(caplog):
     cfg = replace(config_mod.Config(),
                   rig=replace(config_mod.Config().rig, coverage_mm=(300.0, 200.0)))
     with caplog.at_level(logging.WARNING):
-        config_mod.validate(cfg)
+        config_mod.warn_about_geometry(cfg)
     assert not [r for r in caplog.records if "stretched" in r.getMessage()]
 
 
@@ -152,7 +161,7 @@ def test_landscape_marks_do_not_change_the_required_coverage_shape(caplog):
         cfg = replace(good, preview=replace(good.preview, landscape=landscape))
         caplog.clear()
         with caplog.at_level(logging.WARNING):
-            config_mod.validate(cfg)
+            config_mod.warn_about_geometry(cfg)
         assert not [r for r in caplog.records if "stretched" in r.getMessage()], \
             f"landscape={landscape} changed the verdict on a correct coverage"
 
@@ -168,5 +177,5 @@ def test_a_turned_camera_does_change_it(caplog):
                   rig=replace(base.rig, coverage_mm=(200.0, 300.0)),
                   capture=replace(base.capture, rotate_deg=90))
     with caplog.at_level(logging.WARNING):
-        config_mod.validate(cfg)
+        config_mod.warn_about_geometry(cfg)
     assert not [r for r in caplog.records if "stretched" in r.getMessage()]

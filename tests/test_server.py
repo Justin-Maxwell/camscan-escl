@@ -31,6 +31,11 @@ def make_config(tmp_path, body=FAKE_CAMERA):
     script = tmp_path / "fake_camera.py"
     script.write_text(body)
     return Config(
+        # Generated state under tmp_path, NOT the real config directory. These
+        # scans go through the same code a real one does, so without this the
+        # suite overwrote the user's preview border with the flat blue
+        # rectangle FAKE_CAMERA paints -- and the daemon then showed it.
+        state_dir=tmp_path,
         server=ServerConfig(port=0, bind="127.0.0.1"),
         capture=CaptureConfig(
             command=f"{sys.executable} {script} %f",

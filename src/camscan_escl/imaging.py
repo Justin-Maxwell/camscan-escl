@@ -36,9 +36,19 @@ def anchor_offset_mm(
 ) -> tuple[float, float]:
     """How far to shift a region of this size to sit at `anchor`, in mm.
 
+    Against the whole coverage, which is the whole scannable area. There was
+    briefly a clamp here that anchored inside the streamed band instead: the
+    preview frame used to be the size of the camera's streaming mode, which
+    is smaller than the still, so an edge-anchored mark landed off-screen and
+    the clamp dragged it back into view -- at the cost of an edge-anchored
+    scan using only the part of the sensor the stream covered.
+
+    The preview frame is now sized to the scannable area and shows all of it,
+    so the mark is on screen where it always belonged and the clamp is gone.
+
     Negative when the region is larger than the coverage, which keeps an
-    oversized request centred on what the camera can actually see rather
-    than dumping the overflow on one side.
+    oversized request centred on what the camera can see rather than dumping
+    the overflow on one side.
     """
     fx, fy = ANCHORS.get(anchor, ANCHORS["top-left"])
     return ((coverage_mm[0] - region_mm[0]) * fx,
