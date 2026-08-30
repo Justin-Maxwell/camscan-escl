@@ -13,8 +13,8 @@ from __future__ import annotations
 import html
 
 from .config import Config
-from .preview import (Mark, preview_size, union_rect,
-                      visible_still_region)
+from .preview import (Mark, fence_edge, ghost_axis, preview_size, union_rect,
+                      upright_still, visible_still_region)
 
 # Distinct hues, readable against paper and against a dark desk alike.
 COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
@@ -22,12 +22,34 @@ COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
 
 def page_html(cfg: Config, marks: list[Mark]) -> str:
     w, h = preview_size(cfg)
-    still = (cfg.capture.native_width, cfg.capture.native_height)
-    x0, y0, _x1, _y1 = visible_still_region(cfg)
-    hidden_rows = int(round(x0 if cfg.capture.rotate_deg % 180 == 90 else y0))
-    # After a transpose the hidden band is at the sides, not the top.
-    edges = ("left and at the right" if cfg.capture.rotate_deg % 180 == 90
-             else "top and at the bottom")
+    # How much scannable area sits outside the picture, per edge. Both edges
+    # hide a strip on an unfenced rig; a fence removes the strip on the edge
+    # it stands on, leaving only the far one. After a transpose the strips are
+    # at the sides rather than the top and bottom.
+    axis = ghost_axis(cfg)
+    x0, y0, x1, y1 = visible_still_region(cfg)
+    span = upright_still(cfg)[axis]
+    names = ("left", "right") if axis == 0 else ("top", "bottom")
+    hidden = [(name, px) for name, px in
+              zip(names, (int(round((x0, y0)[axis])),
+                          int(round(span - (x1, y1)[axis]))))
+              if px > 0]
+    if not hidden:
+        ghost_note = "the preview shows the whole scannable area"
+    else:
+        ghost_note = (
+            f"the scanner sees {max(px for _n, px in hidden)} pixel rows more "
+            f"than this, at the "
+            + " and at the ".join(name for name, _px in hidden)
+        )
+    edge = fence_edge(cfg)
+    fenced = names[0] if edge == "low" else names[1] if edge == "high" else None
+    fence_note = "" if fenced is None else (
+        f'<p class="note">The <strong>{fenced}</strong> edge is fenced. The '
+        f"scannable area stops where the picture stops there, so a sheet "
+        f"pushed against the rail is registered where you can watch it land."
+        f"</p>"
+    )
 
     # The dead zone: everything outside the union of the paper sizes can
     # never appear in any scan. One path with evenodd, which SVG can express
@@ -117,8 +139,8 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
   both depend on.
 </p>
 <p class="note">
-  The preview is 16:9 and the scan is 3:2, so <strong>the scanner sees
-  {hidden_rows} pixel rows more than this, at the {edges}</strong>.
+  The preview is 16:9 and the scan is 3:2, so <strong>{ghost_note}</strong>.
   A mark can leave the preview and still be captured.
 </p>
+{fence_note}
 """

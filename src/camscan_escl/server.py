@@ -151,7 +151,16 @@ class ESCLHandler(BaseHTTPRequestHandler):
             "papers": [list(p) for p in cfg.preview.papers],
             "preview": dict(zip(("width", "height"),
                                 preview_mod.preview_size(cfg))),
-            "still": [cfg.capture.native_width, cfg.capture.native_height],
+            # The camera's streaming mode, and what else it could be. Asked of
+            # the camera every time: it is not a property of the config, and a
+            # different camera has a different list.
+            "preview_mode": [cfg.preview.width, cfg.preview.height],
+            "preview_modes": [[m.width, m.height]
+                              for m in preview_mod.available_modes(cfg)],
+            # The SCANNABLE area, in the sensor's own orientation. Not the
+            # whole sensor: a fence drops a strip of it, and every consumer of
+            # this wants the area rig.coverage_mm actually measures.
+            "still": list(preview_mod.sensor_scannable(cfg)),
             # The area the camera can actually see, which is smaller than the
             # coverage and is what the anchor is applied inside.
             "streamed_mm": [round(v, 1) for v in preview_mod.streamed_mm(cfg)],
@@ -463,7 +472,7 @@ class ESCLHandler(BaseHTTPRequestHandler):
                     preview_mod.rebuild_ghost(self.config)
                 except Exception as exc:  # noqa: BLE001 - never fail a scan
                     log.warning("could not write the scan ghost: %s", exc)
-                frame = imaging.orient(frame, self.config.capture.rotate_deg)
+                frame = preview_mod.to_scannable(self.config, frame)
             t3 = time.monotonic()
             log.info("timing: release %.2fs, capture %.2fs, resume %.2fs",
                      t1 - t0, t2 - t1, t3 - t2)

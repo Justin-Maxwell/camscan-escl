@@ -94,6 +94,7 @@ def window():
             "rotate_deg": before["rotate_deg"],
             "landscape": before["landscape"],
             "papers": before["papers"],
+            "preview_mode": before["preview_mode"],
         }).encode(),
         headers={"Content-Type": "application/json"}, method="POST"), timeout=20)
 
@@ -103,6 +104,42 @@ def test_rotation_dropdown_reaches_the_daemon(window, index, degrees):
     window.rotation.set_selected(index)
     pump()
     assert settings()["rotate_deg"] == degrees
+
+
+def test_video_mode_dropdown_reaches_the_daemon(window):
+    """Every mode the camera offered, driven through the dropdown.
+
+    Not parametrized on a fixed list: the modes are this camera's, read off
+    it at runtime, so the test asks the window what it was given.
+    """
+    assert window._modes, "the daemon offered no streaming modes"
+    for index, mode in enumerate(window._modes):
+        window.mode.set_selected(index)
+        pump()
+        assert settings()["preview_mode"] == list(mode)
+
+
+def test_a_bigger_video_mode_gives_a_bigger_canvas(window):
+    """The whole point of the control: more preview pixels, same rig.
+
+    The scannable area is a property of the camera and the anchor, so it must
+    NOT move when the mode does -- only the canvas the marks are drawn on.
+    """
+    by_pixels = sorted(window._modes, key=lambda m: m[0] * m[1])
+    if len(by_pixels) < 2:
+        pytest.skip("camera offers only one mappable mode")
+
+    window.mode.set_selected(window._modes.index(by_pixels[0]))
+    pump()
+    small = settings()
+
+    window.mode.set_selected(window._modes.index(by_pixels[-1]))
+    pump()
+    large = settings()
+
+    assert large["preview"]["width"] > small["preview"]["width"]
+    assert large["still"] == small["still"], "the scannable area moved"
+    assert large["streamed_mm"] == small["streamed_mm"], "the band moved"
 
 
 @pytest.mark.parametrize("want", [True, False, True])

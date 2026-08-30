@@ -244,6 +244,10 @@ class RigConfig:
     # Where the scan region sits within that coverage. Clients always send an
     # origin of 0,0, so without this every scan is pinned to the top left of
     # what the camera sees. A rig usually wants the page in the middle.
+    # An edge anchor also decides the size of the scannable area: the strip of
+    # sensor the live picture never reaches is dropped on the anchored edge,
+    # so the edge a sheet registers against is one you can watch. See
+    # preview.py's module docstring.
     anchor: str = "center"
 
 
@@ -407,6 +411,14 @@ def apply_adjustments(cfg: Config, data: dict) -> Config:
     if rotate is not None:
         cfg = replace(cfg, capture=replace(cfg.capture,
                                            rotate_deg=int(rotate) % 360))
+    # The streaming mode. Everything the preview derives -- the canvas, the
+    # band, the scale, where the marks land -- is computed from this pair, so
+    # setting it is the whole change.
+    mode = data.get("preview_mode")
+    if mode and len(mode) == 2:
+        cfg = replace(cfg, preview=replace(cfg.preview,
+                                           width=int(mode[0]),
+                                           height=int(mode[1])))
     # Camera controls. Absent leaves the config's value; explicit null clears
     # the pin and hands the control back to the camera's own default.
     image_keys = [k for k in ("brightness", "contrast") if k in data]
@@ -439,6 +451,7 @@ def save_adjustments(cfg: Config, path: Path | None = None) -> Path:
                     "file to fall back to config.toml.",
         "coverage_mm": list(cfg.rig.coverage_mm),
         "anchor": cfg.rig.anchor,
+        "preview_mode": [cfg.preview.width, cfg.preview.height],
         "rotate_deg": cfg.capture.rotate_deg,
         "landscape": cfg.preview.landscape,
         "papers": [list(p) for p in cfg.preview.papers],
@@ -465,9 +478,13 @@ def warn_about_geometry(cfg: Config) -> None:
     will be stretched 2.12x" on every start of a correctly calibrated rig,
     which is the precise way to teach someone to ignore a warning.
     """
-    fw, fh = cfg.capture.native_width, cfg.capture.native_height
-    if cfg.capture.rotate_deg % 180 == 90:
-        fw, fh = fh, fw
+    from .preview import upright_still
+
+    # The scannable area, which is what rig.coverage_mm measures and which an
+    # edge anchor has already trimmed. Measuring the whole still here would
+    # report a skew of exactly the strip's size on a correctly calibrated
+    # edge-anchored rig.
+    fw, fh = upright_still(cfg)
     frame_aspect = fw / fh
     cov_aspect = cfg.rig.coverage_mm[0] / cfg.rig.coverage_mm[1]
     skew = max(frame_aspect, cov_aspect) / min(frame_aspect, cov_aspect)
@@ -503,8 +520,10 @@ def validate(cfg: Config) -> None:
     # still pixels by cropping and every crop mark would be wrong. Measured;
     # see preview.py.
     if cfg.preview.enable:
+        from .preview import is_mappable
+
         ratio = cfg.preview.width / cfg.preview.height
-        if abs(ratio - 16 / 9) > 0.01:
+        if not is_mappable(cfg.preview.width, cfg.preview.height):
             raise ValueError(
                 f"preview.width/height must be 16:9, got "
                 f"{cfg.preview.width}x{cfg.preview.height}. A 4:3 preview has a "

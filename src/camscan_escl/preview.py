@@ -22,6 +22,22 @@ preview cannot share the still's framing exactly. Measured on this rig:
 So a 16:9 preview shows the middle 1296 of the still's 1536 rows: the
 scanner sees 120 rows MORE at the top and bottom than you can see. Crop
 marks must show that, or they lie about what will be captured.
+
+THE ANCHORED EDGE. A rig registers a sheet by pushing it against a rail, and
+the crop mark for that sheet is drawn flush against the same edge of the
+scannable area. Those two edges have to be the same line or the mark is drawn
+somewhere the sheet cannot be. Take the whole still as the scannable area and
+they are not: its edge sits 120 rows outside the picture, so the registration
+edge is in the ghost, where it cannot be watched.
+
+So the scannable area drops the strip on the anchored edge, and the two edges
+become one line. Which strip goes is read off `rig.anchor` and nothing else --
+there is no configuration in which an anchor names an edge and the strip
+outside it should be kept, so this is not a setting. A centred anchor
+registers against nothing and keeps both strips.
+
+It costs those 120 rows, about 8% of the sensor, and it is not a function of
+camera height: no particular height is needed to make the marks true.
 """
 
 from __future__ import annotations
@@ -37,7 +53,7 @@ from pathlib import Path
 
 from . import devices
 from .config import Config
-from .imaging import anchor_offset_mm
+from .imaging import ANCHORS, anchor_offset_mm
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +99,43 @@ TRANSPOSE = {90: "transpose=cclock", 180: "transpose=clock,transpose=clock",
              270: "transpose=clock"}
 
 
+def is_mappable(width: int, height: int) -> bool:
+    """Can a preview of this size be mapped onto the still by cropping?
+
+    THE definition, and `validate` calls this one rather than repeating the
+    test. A chooser that hid a size `validate` accepts would be the daemon
+    holding two opinions about the same mode, and the stricter of the two
+    would be wherever someone happened to look last.
+
+    16:9 within a tolerance, because the measured relationship -- full width,
+    centred vertical crop -- was established for 16:9 and disproved for 4:3, a
+    narrower field of view that no crop maps. The tolerance is wide enough to
+    admit a camera's near-16:9 sizes (the C920 has 800x448 and 1600x896 at
+    1.7857) and nowhere near wide enough to admit 4:3 at 1.333. Nothing here
+    assumes an exact ratio: the band is computed from the size in
+    `raw_visible_still_region`, so 1.7857 yields a 1290-row band rather than
+    1296 and everything downstream follows.
+    """
+    return abs(width / height - 16 / 9) <= 0.01
+
+
+def available_modes(cfg: Config) -> list[devices.StreamMode]:
+    """The camera's mappable streaming modes, largest first.
+
+    Asked of the camera, so the choice is whatever this camera has rather
+    than a list of one model's. Every derived quantity -- the canvas, the
+    band, the scale, the marks -- is computed from the size, so changing it
+    needs nothing else changed.
+    """
+    try:
+        path = devices.resolve(cfg.capture.device, "capture")
+    except devices.DeviceError as exc:
+        log.warning("cannot offer preview modes: %s", exc)
+        return []
+    return [m for m in reversed(devices.stream_modes(path))
+            if is_mappable(m.width, m.height)]
+
+
 def sensor_preview_size(cfg: Config) -> tuple[int, int]:
     """The preview frame as it comes off the sensor, before any transpose."""
     return (cfg.preview.width, cfg.preview.height)
@@ -98,10 +151,100 @@ def stream_size(cfg: Config) -> tuple[int, int]:
     return (h, w) if cfg.capture.rotate_deg % 180 == 90 else (w, h)
 
 
-def upright_still(cfg: Config) -> tuple[int, int]:
-    """The still's dimensions in the space everything downstream works in."""
+def raw_upright_still(cfg: Config) -> tuple[int, int]:
+    """The whole still's dimensions, after the transpose and before the fence."""
     sw, sh = cfg.capture.native_width, cfg.capture.native_height
     return (sh, sw) if cfg.capture.rotate_deg % 180 == 90 else (sw, sh)
+
+
+def ghost_axis(cfg: Config) -> int:
+    """Which upright axis carries the two unstreamed strips. 0 across, 1 down.
+
+    A 16:9 stream of a 3:2 still is the still's full width with a centred
+    vertical crop, so the strips lie on the sensor's row axis. The transpose
+    carries them to the sides.
+    """
+    return 0 if cfg.capture.rotate_deg % 180 == 90 else 1
+
+
+def fence_edge(cfg: Config) -> str | None:
+    """Which upright edge the anchor registers against: "low", "high", or None.
+
+    Read off `rig.anchor`, and off nothing else. An anchored edge is the line a
+    sheet is registered against, so it has to be a line that can be seen; there
+    is no configuration in which an anchor names an edge and the strip outside
+    it should be kept. None only when the anchor names no edge on the axis the
+    strips lie on, which is a centred anchor -- and then there is nothing to
+    remove, because nothing is being registered against anything.
+    """
+    fraction = ANCHORS.get(cfg.rig.anchor, ANCHORS["top-left"])[ghost_axis(cfg)]
+    if fraction == 0.0:
+        return "low"
+    if fraction == 1.0:
+        return "high"
+    return None
+
+
+def scannable_box(cfg: Config) -> tuple[int, int, int, int]:
+    """The scannable area within the raw upright still, in still pixels.
+
+    The still minus the strip the live stream never reaches on the anchored
+    edge: that edge of the scannable area and that edge of the live picture
+    become the same line, so a sheet pushed against the rail is registered
+    where it can be watched. Costs the 120 sensor pixels the strip holds.
+
+    The strip on the far edge is kept, and is scanned but not streamed. So is
+    both strips on a centred anchor, which registers against nothing.
+    """
+    sw, sh = raw_upright_still(cfg)
+    edge = fence_edge(cfg)
+    if edge is None:
+        return (0, 0, sw, sh)
+    x0, y0, x1, y1 = raw_visible_still_region(cfg)
+    if ghost_axis(cfg) == 0:
+        return (int(round(x0)), 0, sw, sh) if edge == "low" \
+            else (0, 0, int(round(x1)), sh)
+    return (0, int(round(y0)), sw, sh) if edge == "low" \
+        else (0, 0, sw, int(round(y1)))
+
+
+def upright_still(cfg: Config) -> tuple[int, int]:
+    """The scannable area's dimensions, which is the space everything
+    downstream works in. `rig.coverage_mm` measures exactly this rectangle."""
+    x0, y0, x1, y1 = scannable_box(cfg)
+    return (x1 - x0, y1 - y0)
+
+
+def sensor_scannable(cfg: Config) -> tuple[int, int]:
+    """The scannable area in the sensor's own orientation, before the transpose."""
+    w, h = upright_still(cfg)
+    return (h, w) if cfg.capture.rotate_deg % 180 == 90 else (w, h)
+
+
+def to_scannable(cfg: Config, frame):
+    """Turn a raw capture upright and trim it to the scannable area.
+
+    The box is scaled to the frame in hand rather than used as given. It is
+    derived from `capture.native_*`, and not every frame that comes through
+    here is that size: `save_scan_still` downsamples the stored still to keep
+    the file small, so the ghost is rebuilt from a 1600x1067 copy of a
+    2304x1536 capture. Cropping that with a full-size box does not fail --
+    PIL extends past the edge with black -- so the ghost came out two thirds
+    black, in the shape of the difference. Nothing numeric caught it: every
+    test fed this a full-size frame. It was found by looking at the picture.
+    """
+    from .imaging import orient
+
+    frame = orient(frame, cfg.capture.rotate_deg)
+    x0, y0, x1, y1 = scannable_box(cfg)
+    sw, sh = raw_upright_still(cfg)
+    fw, fh = frame.size
+    if (fw, fh) != (sw, sh):
+        x0, x1 = round(x0 * fw / sw), round(x1 * fw / sw)
+        y0, y1 = round(y0 * fh / sh), round(y1 * fh / sh)
+    if (x0, y0, x1, y1) == (0, 0, fw, fh):
+        return frame
+    return frame.crop((x0, y0, x1, y1))
 
 
 def still_scale(cfg: Config) -> float:
@@ -163,8 +306,8 @@ def turn_mark(mark: Mark, rotate_deg: int, sensor: tuple[int, int]) -> Mark:
     )
 
 
-def visible_still_region(cfg: Config) -> tuple[float, float, float, float]:
-    """Which part of the UPRIGHT still the preview can show, in still pixels.
+def raw_visible_still_region(cfg: Config) -> tuple[float, float, float, float]:
+    """Which part of the WHOLE upright still the preview can show, in pixels.
 
     The measured relationship is about the sensor: a 16:9 preview is the
     still's full width with a centred vertical crop. Turn the camera and that
@@ -179,6 +322,18 @@ def visible_still_region(cfg: Config) -> tuple[float, float, float, float]:
         # Sensor rows become upright columns.
         return (y0, 0.0, y0 + visible_h, float(sw))
     return (0.0, y0, float(sw), y0 + visible_h)
+
+
+def visible_still_region(cfg: Config) -> tuple[float, float, float, float]:
+    """The same band, measured from the scannable area's own origin.
+
+    Which is where everything downstream measures from. Unfenced the two
+    functions agree; fenced, the band's coordinates shift by the strip the
+    fence removed, and on the fenced edge the band starts at zero.
+    """
+    bx0, by0, _bx1, _by1 = scannable_box(cfg)
+    x0, y0, x1, y1 = raw_visible_still_region(cfg)
+    return (x0 - bx0, y0 - by0, x1 - bx0, y1 - by0)
 
 
 def streamed_mm(cfg: Config) -> tuple[float, float]:
@@ -378,16 +533,24 @@ def fit_transform(cfg: Config, marked: list[Mark]) -> tuple[float, int, int]:
     if scale >= 0.999:
         return (1.0, 0, 0)
 
-    # Padding apportioned to the sides that overflow, in the ratio they
-    # overflow by -- NOT simply `overflow * scale`. One axis usually sets the
-    # scale and leaves the other with slack it never asked for, and giving
-    # that slack entirely to one side put 7 pixels above the picture and 269
-    # below it on a mark whose vertical overflow was centred.
+    # Padding apportioned to the sides that overflow -- NOT simply
+    # `overflow * scale`. One axis usually sets the scale and leaves the other
+    # with slack it never asked for, and giving that slack entirely to one
+    # side put 7 pixels above the picture and 269 below it on a mark whose
+    # vertical overflow was centred.
+    #
+    # Centre the picture, then shift it by half the imbalance in the overflow.
+    # On the axis that set the scale, slack == before + after and this returns
+    # exactly `before`, which is the whole overflow going where it is needed.
+    # On the slack axis it stays near the middle. Apportioning by the RATIO
+    # instead multiplied that axis's rounding error by slack/(before + after):
+    # an overflow of 9 against 10, which is one pixel of rounding on a
+    # symmetric mark, moved 183 pixels of slack to 87 against 96.
     def share(before: int, after: int, extent: int) -> int:
         slack = extent - int(round(extent * scale))
         if before + after <= 0:
             return slack // 2       # no overflow this way: no preference
-        return max(0, min(slack, int(round(slack * before / (before + after)))))
+        return max(0, min(slack, int(round((slack + before - after) / 2))))
 
     return (scale, share(left, right, pw), share(top, bottom, ph))
 
@@ -562,15 +725,13 @@ def rebuild_ghost(cfg: Config) -> Path | None:
     """
     from PIL import Image
 
-    from .imaging import orient
-
     still = scan_still_path(cfg)
     if not cfg.preview.scan_ghost or not still.exists():
         clear_ghost(cfg)
         return None
     try:
         with Image.open(still) as stored:
-            frame = orient(stored.convert("RGB"), cfg.capture.rotate_deg)
+            frame = to_scannable(cfg, stored.convert("RGB"))
     except OSError as exc:
         log.warning("could not read the stored scan still: %s", exc)
         clear_ghost(cfg)

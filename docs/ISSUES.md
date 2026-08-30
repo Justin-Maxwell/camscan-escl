@@ -8,31 +8,6 @@ saying so in the commit message.
 
 ---
 
-## 10. Next session: the "drop a side" fix
-
-**Status:** agreed in principle, not designed
-**Depends on:** issue 8, which establishes that the camera will not move the
-streamed band
-
-The streamed band is the middle 1296 of the sensor's 1536 rows, fixed and
-centred, so 120 rows on each side are scannable but never visible live. An
-edge-anchored page therefore has its alignment edge in the ghost, not in the
-moving picture.
-
-The fix as understood: **give up one of the two strips**. Define the scannable
-area as the streamed band plus the 120-row strip on ONE side only. The coverage
-edge on the anchored side then coincides with the stream edge, so an
-edge-anchored page is fully visible live — bought with about 8% of the sensor
-on the far side.
-
-> **Confirm the intent before building this.** Justin called it "your 'drop a
-> side' fix", and the above is a reconstruction from the geometry rather than
-> a proposal made in so many words. He also called it "yuk, but meh", which
-> fits throwing away sensor area. Worth thirty seconds of checking rather than
-> a session of building the wrong thing.
-
----
-
 ## 9. Mains frequency is never set, and the camera's default is wrong here
 
 **Status:** open
@@ -137,8 +112,16 @@ is 113 Mbps on a 480 Mbps bus shared with the camera's audio interfaces, so
 the frame rate is bandwidth-limited and each frame is 0.5s apart.
 
 The only lever is MJPG 1920x1080: a capture of ~0.6s and a scan of ~2s. The
-cost is 1080 rows against 1536, and 16:9, so the preview geometry would need
-redoing. Note we already upscale — A4 at 150 dpi wants 1754 rows and the
+cost is 1080 rows against 1536, and 16:9.
+
+**The preview geometry no longer needs redoing for it.** That objection was
+written when the mapping was assumed; it is now derived from
+`capture.native_*` and the streaming mode, and the streaming mode is already a
+free variable with a chooser in the GUI. A 16:9 still would make the streamed
+band the whole frame — `visible_still_region` returns the full height when the
+two aspects match — so there would be no unstreamed strips, nothing for the
+anchored edge to drop, and the picture would show the whole scannable area.
+What remains is the resolution argument below, which is unaffected. Note we already upscale — A4 at 150 dpi wants 1754 rows and the
 sensor gives 1536 — so 1080 would mean upscaling 62% and the declared dpi
 would drift further from honest. Not recommended without a decision to drop
 the declared resolution too.
@@ -244,11 +227,27 @@ softens the picture (it is a digital crop, upscaled from fewer sensor pixels),
 shifts the streamed band relative to the still so every crop mark moves, and
 buys no new view in return.
 
-The way to get a page inside the live band is to raise the camera until the
-coverage is wide enough. The band is a fixed 84.375% of the coverage, centred,
-so a sheet is fully live once `coverage_width >= paper_width / 0.84375`:
-249 mm for A4, 256 mm for Letter and Legal. At 256 mm the sensor still
-delivers 152 dpi, above the declared 150.
+**The answer is the anchored edge, not camera height.** Raising the camera
+until the coverage is wide enough does work — the band is a fixed 84.375% of
+the coverage, centred, so a sheet is fully live once
+`coverage_width >= paper_width / 0.84375`, meaning 249 mm for A4 and 256 mm
+for Letter and Legal. It is the wrong answer, because it makes a particular
+camera height a requirement, and a rig that has to be placed to the
+millimetre is a bug rather than a feature. Any knock puts it out.
+
+What a page actually needs is a rail to be pushed against, and the mark for
+that rail to be drawn on a line you can see. So the scannable area drops the
+120-row strip on the anchored edge, and its edge and the picture's edge are
+the same line. It costs 8% of the sensor and holds at any camera height.
+Which strip goes is read off `rig.anchor`; there is no setting, because there
+is no rig on which an anchor names an edge and the strip outside it should be
+kept.
+
+Height then only sets the resolution, and only has to land inside a window:
+218.5 mm to 239.8 mm of edge-anchored coverage width keeps every configured
+paper both inside the frame and at or above the declared 150 dpi. Legal sets
+the lower bound, needing 237 mm of width for its 355.6 mm length at the
+sensor's 3:2. That is a 21 mm window, not a target.
 
 Every crop mark is placed by the centred-crop relationship between those two
 modes, so a non-default zoom moves the marks and nothing in the pipeline can
@@ -294,6 +293,13 @@ elimination above if it survives one.
 setting claims. With the placeholder the A4 mark fills the frame precisely
 and Letter comes out 1316 px wide in a 1280 px frame, which is the placeholder
 announcing itself.
+
+**Set `rig.anchor` before measuring.** The setting measures the scannable
+area, and an edge anchor makes that area smaller than the sensor — 1416
+rather than 1536 pixels across. A measurement taken on a centred anchor is 8%
+wrong once an edge one is picked, and nothing announces it. Aim for the top
+of the window in issue 8, around 239 mm of width: that is the declared 150
+dpi with the most room to spare for the far edge.
 
 `coverage_mm = [210.0, 297.0]` is a guess, not a measurement. Scans come out
 at the right *pixel dimensions* because the units contract is enforced, but

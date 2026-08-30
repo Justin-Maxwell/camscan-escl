@@ -184,6 +184,17 @@ overflows.
 whole coverage — which is the scannable area, all of which is now on screen.
 An edge-anchored scan therefore uses the whole sensor.
 
+**An edge anchor also sets the size of the scannable area.** The live picture
+is the middle 1296 of the sensor's 1536 rows, so taking the whole still as the
+scannable area puts its edge — the line the anchored mark is drawn flush
+against — 120 rows outside the picture, and you cannot watch a sheet register
+against a line you cannot see. So the strip on the anchored edge is dropped
+and the two edges become one line. It costs 8% of the sensor, works at any
+camera height, and is not a setting: an anchor names an edge, and there is no
+rig where it names one and the strip outside it should be kept. A centred
+anchor registers against nothing and keeps both strips. Set the anchor before
+measuring `rig.coverage_mm` — it changes the area that measurement describes.
+
 **When a paper does not fit**, the picture shrinks and a border appears —
 but only on the sides the marks actually run off. The anchored edge never
 overflows, so it never gets one: the video stays flush against exactly the
@@ -395,17 +406,30 @@ the camera for Kamoso or similar, set `preview.enable = false` (or run with
 mode is 16:9 or 4:3. Measured here: 16:9 modes are the still's full width with
 a centred vertical crop, so the preview shows the middle 1296 of 1536 rows and
 **the scanner sees 120 rows more at the top and bottom**. The page says so, and
-marks that leave the frame are labelled. 4:3 modes are zoomed to a narrower
-horizontal field and cannot be mapped by cropping at all, so the daemon
-refuses to start with a 4:3 preview rather than draw crop marks that lie.
+marks that leave the frame are labelled. With an edge anchor it is one edge
+rather than two, and the page says which.
+
+**The streaming mode is a free variable.** The settings window's *Video*
+dropdown lists whatever this camera reports — asked of the driver, not a list
+baked into the daemon — and picking one changes only how many pixels the
+preview carries. The canvas, the band, the strip the anchored edge drops and
+where every mark lands are all derived, so nothing else needs touching, and
+what a scan captures does not move. On the C920 that runs from 160×90 to
+1920×1080; the largest gives a 1180×1920 canvas against 787×1280 at the
+default. Only exact 16:9 sizes are offered, and the daemon refuses to start
+with a 4:3 preview rather than draw crop marks that lie.
 
 ## Calibrate before trusting the output
 
 Two values decide whether a scan comes out at the right scale:
 
-- **`rig.coverage_mm`** — the physical area the frame actually covers at rig
-  height. Put a ruler under the camera and measure it. This is what maps an
-  eSCL scan region onto the sensor.
+- **`rig.coverage_mm`** — the physical area the scannable area actually covers
+  at rig height. Put a ruler under the camera and measure it. This is what
+  maps an eSCL scan region onto the sensor. Set `rig.anchor` first: an edge
+  anchor makes the scannable area 8% smaller, so a measurement taken before it
+  is wrong after it. There is no target height, only a window — 218.5 mm to
+  239.8 mm of edge-anchored coverage width keeps A4, A5 and Letter inside the
+  frame and at or above the declared 150 dpi.
 - **`capture.focus`** — leave it on autofocus, which is the default. The
   camera focuses itself well at rig distances, and the fixed value this
   project used to ship was measurably softer than what autofocus picks. Pin

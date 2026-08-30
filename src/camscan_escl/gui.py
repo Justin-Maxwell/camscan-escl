@@ -475,6 +475,24 @@ class Window(Gtk.ApplicationWindow):
         rot_row.append(self.rotation)
         box.append(rot_row)
 
+        # The camera's streaming mode. Beside the rotation because both are
+        # properties of the camera rather than of the paper, and both rebuild
+        # the pipeline. Populated from the daemon, which asks the camera --
+        # so the list is this camera's, not a list of one model's.
+        mode_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        mode_row.append(Gtk.Label(label="Video", xalign=0))
+        self.mode = Gtk.DropDown.new_from_strings(["—"])
+        self.mode.set_tooltip_text(
+            "The camera's streaming mode. Only modes that are exactly 16:9 "
+            "are offered: those are the still's full width with a centred "
+            "vertical crop, so preview pixels map onto still pixels and the "
+            "crop marks are true. A bigger mode is a sharper preview; it "
+            "does not change what a scan captures.")
+        self.mode.connect("notify::selected", self._on_mode)
+        mode_row.append(self.mode)
+        box.append(mode_row)
+        self._modes: list[tuple[int, int]] = []
+
         self.landscape_check = Gtk.CheckButton(label="Landscape")
         self.landscape_check.set_tooltip_text(
             "Lay the crop marks across the frame, for landscape pages. "
@@ -643,6 +661,12 @@ class Window(Gtk.ApplicationWindow):
             self._rotate = ROTATIONS[idx][1]
         # A turned camera turns the frame, so the derived height flips too.
         self._sync_height()
+        self._schedule_apply()
+
+    def _on_mode(self, _dropdown, _param) -> None:
+        # Nothing to recompute here. The mode changes how much detail the
+        # preview carries, not the shape of the scannable area, so the
+        # coverage and its derived height are untouched.
         self._schedule_apply()
 
     def _on_landscape(self, _button) -> None:
@@ -960,6 +984,7 @@ class Window(Gtk.ApplicationWindow):
             active = {p[0] for p in data["papers"]}
             for name, check in self.paper_checks.items():
                 check.set_active(name in active)
+            self._set_modes(data)
             self._rotate = int(data.get("rotate_deg", 0))
             for i, (_label, deg) in enumerate(ROTATIONS):
                 if deg == self._rotate % 360:
@@ -975,6 +1000,27 @@ class Window(Gtk.ApplicationWindow):
         self._update_dpi_note()
         self._show_fit(data)
 
+    def _set_modes(self, data: dict) -> None:
+        """Fill the video dropdown from the camera's own list.
+
+        The mode in use is always in the list even if the camera did not
+        offer it -- a hand-written config, or a camera that has since been
+        unplugged. Dropping it would silently move the selection to something
+        else the next time anything was applied.
+        """
+        modes = [(int(w), int(h)) for w, h in data.get("preview_modes") or []]
+        current = data.get("preview_mode")
+        current = (int(current[0]), int(current[1])) if current else None
+        if current and current not in modes:
+            modes.append(current)
+        modes.sort(key=lambda m: m[0] * m[1], reverse=True)
+        if modes != self._modes:
+            self._modes = modes
+            self.mode.set_model(Gtk.StringList.new(
+                [f"{w}×{h}" for w, h in modes] or ["—"]))
+        if current in modes:
+            self.mode.set_selected(modes.index(current))
+
     def _show_fit(self, data: dict) -> None:
         """Say in words what the zoom-out used to say by padding the frame.
 
@@ -983,10 +1029,25 @@ class Window(Gtk.ApplicationWindow):
         numbers do: how wide the sheet is against how wide the camera's view
         actually is.
         """
+        # An edge anchor drops the strip outside it, so the scannable area is
+        # smaller than the sensor and changes size when the anchor does. The
+        # frame the derived height and the dpi note are computed from has to
+        # come back from the daemon rather than be assumed to be the sensor.
+        frame = data.get("still")
+        if frame and tuple(frame) != tuple(self._frame):
+            self._frame = tuple(frame)
+            self._sync_height()
+
         # One decimal. The nudge buttons multiply, so the stored value carries
         # a tail of digits no ruler can measure and no reader wants to see.
         coverage = data.get("coverage_mm") or [0, 0]
         note = f"coverage {coverage[0]:.1f} × {coverage[1]:.1f} mm"
+        # The canvas the mode produces. Shown because the video dropdown's
+        # whole effect is here: a bigger mode is a bigger canvas and a sharper
+        # preview, and nothing else about the rig changes.
+        canvas = data.get("preview") or {}
+        if canvas.get("width"):
+            note += f"\npreview {canvas['width']} × {canvas['height']} px"
         streamed = data.get("streamed_mm")
         if streamed:
             # The difference between these two is the border: scannable, but
@@ -1039,6 +1100,9 @@ class Window(Gtk.ApplicationWindow):
             "landscape": self.landscape_check.get_active(),
             "rotate_deg": self._rotate,
         }
+        idx = self.mode.get_selected()
+        if 0 <= idx < len(self._modes):
+            payload["preview_mode"] = list(self._modes[idx])
         self._say("applying…")
 
         def work():

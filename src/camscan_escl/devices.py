@@ -52,6 +52,22 @@ _CAP_SIZE = struct.calcsize(_CAP_FMT)
 # _IOR('V', 0, struct v4l2_capability)
 VIDIOC_QUERYCAP = (2 << 30) | (_CAP_SIZE << 16) | (ord("V") << 8) | 0
 
+# struct v4l2_frmsizeenum: __u32 index, pixel_format, type; a union whose
+# largest arm is v4l2_frmsize_stepwise (six __u32); __u32 reserved[2].
+_FRMSIZE_FMT = "III6I2I"
+# struct v4l2_frmivalenum: __u32 index, pixel_format, width, height, type;
+# a union whose largest arm is v4l2_frmival_stepwise (six __u32); reserved[2].
+_FRMIVAL_FMT = "IIIII6I2I"
+
+# _IOWR('V', 74/75, ...). Both write the index in and read the answer back.
+VIDIOC_ENUM_FRAMESIZES = (
+    (3 << 30) | (struct.calcsize(_FRMSIZE_FMT) << 16) | (ord("V") << 8) | 74)
+VIDIOC_ENUM_FRAMEINTERVALS = (
+    (3 << 30) | (struct.calcsize(_FRMIVAL_FMT) << 16) | (ord("V") << 8) | 75)
+
+FRMSIZE_DISCRETE = 1
+FRMIVAL_DISCRETE = 1
+
 CAP_VIDEO_CAPTURE = 0x00000001
 CAP_VIDEO_OUTPUT = 0x00000002
 CAP_META_CAPTURE = 0x00800000
@@ -274,6 +290,88 @@ def describe(spec: str, role: str = "capture",
         out["driver"] = device.driver
         out["detail"] = f"{device.card} ({device.kind})"
     return out
+
+
+@dataclass(frozen=True)
+class StreamMode:
+    """One discrete frame size the camera offers, and the rates it runs at."""
+
+    width: int
+    height: int
+    rates: tuple[float, ...]        # frames per second, highest first
+
+    @property
+    def aspect(self) -> float:
+        return self.width / self.height
+
+    @property
+    def label(self) -> str:
+        return f"{self.width}×{self.height}"
+
+
+def _fourcc(text: str) -> int:
+    """A V4L2 pixel format code, from its four characters."""
+    return struct.unpack("<I", text.encode("ascii").ljust(4)[:4])[0]
+
+
+def _frame_rates(fd: int, pixfmt: int, width: int, height: int
+                 ) -> tuple[float, ...]:
+    """Discrete frame rates for one mode. Empty when the driver is stepwise."""
+    rates: list[float] = []
+    for index in range(64):
+        buf = bytearray(struct.pack(_FRMIVAL_FMT, index, pixfmt, width, height,
+                                    0, 0, 0, 0, 0, 0, 0, 0, 0))
+        try:
+            fcntl.ioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, buf)
+        except OSError:
+            break                   # EINVAL is how V4L2 says "that is all"
+        values = struct.unpack(_FRMIVAL_FMT, buf)
+        if values[4] != FRMIVAL_DISCRETE:
+            return ()               # a range, not a list: nothing to offer
+        numerator, denominator = values[5], values[6]
+        if numerator:
+            rates.append(denominator / numerator)
+    return tuple(sorted(rates, reverse=True))
+
+
+def stream_modes(path: str, pixelformat: str = "MJPG") -> list[StreamMode]:
+    """Discrete frame sizes this device offers in one pixel format.
+
+    Asked of the driver rather than hard-coded, because the modes are a
+    property of the camera and the daemon should not have a list of one
+    model's baked into it. MJPG by default: that is what the preview pipeline
+    asks ffmpeg for, so a size the camera only offers in YUYV is not a size
+    the preview can use.
+
+    Returns [] rather than raising when the device cannot be opened or does
+    not know the format -- a caller wanting to offer a choice can offer none,
+    and the daemon must not fail to start because a camera was unplugged.
+    """
+    pixfmt = _fourcc(pixelformat)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    except OSError as exc:
+        log.warning("cannot enumerate modes on %s: %s", path, exc)
+        return []
+    modes: list[StreamMode] = []
+    try:
+        for index in range(64):
+            buf = bytearray(struct.pack(_FRMSIZE_FMT, index, pixfmt,
+                                        0, 0, 0, 0, 0, 0, 0, 0, 0))
+            try:
+                fcntl.ioctl(fd, VIDIOC_ENUM_FRAMESIZES, buf)
+            except OSError:
+                break               # EINVAL ends the list, and also means
+                                    # "this device has no such pixel format"
+            values = struct.unpack(_FRMSIZE_FMT, buf)
+            if values[2] != FRMSIZE_DISCRETE:
+                break               # stepwise or continuous: no list to make
+            width, height = values[3], values[4]
+            modes.append(StreamMode(width, height,
+                                    _frame_rates(fd, pixfmt, width, height)))
+    finally:
+        os.close(fd)
+    return sorted(modes, key=lambda m: (m.width * m.height, m.width))
 
 
 def inventory() -> list[dict]:

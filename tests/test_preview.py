@@ -307,16 +307,28 @@ def _pads(cfg):
     return (off_x, pw - off_x - vid_w, off_y, ph - off_y - vid_h)
 
 
-def _overflowing():
-    # A4 is wider than this coverage, and the coverage is wider than the strip
-    # the preview can show, so the A4 mark runs off the frame.
-    return replace(
+def _overflowing(anchor="center"):
+    """A4 runs off the frame on both axes; A5 fits. A5 is the one that fits.
+
+    The coverage height is DERIVED from the scannable area, not written down.
+    An edge anchor drops the strip outside it, so the scannable area is a
+    different shape depending on the anchor -- and a hardcoded pair that
+    matched the untrimmed frame made the mapping anisotropic the moment an
+    edge anchor was used, which showed up as a one-pixel asymmetry in an
+    overflow that ought to be centred.
+
+    180 mm across keeps A4 overflowing both ways whichever shape the frame is.
+    """
+    base = replace(
         Config(),
-        rig=replace(Config().rig, coverage_mm=(195.2, 292.8)),
+        rig=replace(Config().rig, anchor=anchor),
         capture=replace(Config().capture, rotate_deg=270),
         preview=replace(Config().preview,
                         papers=(("A4", 210.0, 297.0), ("A5", 148.0, 210.0))),
     )
+    fw, fh = preview.upright_still(base)
+    return replace(base, rig=replace(base.rig,
+                                     coverage_mm=(180.0, 180.0 * fh / fw)))
 
 
 @pytest.mark.parametrize("anchor,padded_side", [
@@ -329,7 +341,7 @@ def test_padding_appears_only_on_the_side_that_overflows(anchor, padded_side):
     of dead colour between the picture and the very thing being measured
     against it. The overflow is on the other side, and so is the border.
     """
-    cfg = replace(_overflowing(), rig=replace(_overflowing().rig, anchor=anchor))
+    cfg = _overflowing(anchor)
     left, right, _top, _bottom = _pads(cfg)
     pads = (left, right)
     assert pads[padded_side] > 0, "the overflowing side must show a border"
@@ -349,7 +361,7 @@ def test_an_overflowing_mark_is_fully_visible_inside_the_frame():
 
 
 def test_a_centred_anchor_pads_both_sides_evenly():
-    cfg = replace(_overflowing(), rig=replace(_overflowing().rig, anchor="center"))
+    cfg = _overflowing("center")
     left, right, _t, _b = _pads(cfg)
     assert abs(left - right) <= 1
     assert left > 0
@@ -361,7 +373,7 @@ def test_slack_on_the_axis_that_did_not_set_the_scale_is_shared():
     Giving that slack entirely to one side put 7 pixels above the picture and
     269 below it, on a mark whose vertical overflow was centred.
     """
-    cfg = replace(_overflowing(), rig=replace(_overflowing().rig, anchor="left"))
+    cfg = _overflowing("left")
     _left, _right, top, bottom = _pads(cfg)
     assert abs(top - bottom) <= 1, (top, bottom)
 
@@ -407,7 +419,7 @@ def test_the_dimming_stays_off_the_border():
     somewhere the scan DOES reach and the live view cannot -- so greying it
     would wash out the very thing it exists to carry.
     """
-    cfg = replace(_overflowing(), rig=replace(_overflowing().rig, anchor="left"))
+    cfg = _overflowing("left")
     raw = preview.marks(cfg)
     scale, ox, oy = preview.fit_transform(cfg, raw)
     assert scale < 1.0, "this fixture must produce a border, or it tests nothing"
@@ -436,14 +448,20 @@ def test_generated_state_never_lands_in_the_real_config_directory(tmp_path):
     assert preview.ghost_path(_overflowing()).parent == config_mod.CONFIG_DIR
 
 
-def test_the_ghost_covers_more_than_the_live_picture():
+@pytest.mark.parametrize("anchor,strips", [("center", 2), ("left", 1)])
+def test_the_ghost_covers_more_than_the_live_picture(anchor, strips):
     """The whole reason the border is worth filling.
 
-    The scan captures the full still; the preview is a 16:9 crop of it. So
-    the still reaches into the border on exactly the sides the live view is
-    missing, and the ghost rectangle must strictly contain the video one.
+    The scan captures the scannable area; the preview is a 16:9 crop of the
+    still. So the scannable area reaches into the border on the sides the live
+    view is missing, and the ghost rectangle must contain the video one.
+
+    How many sides depends on the anchor. A centred anchor keeps both strips,
+    so the ghost is 1/0.84375 as wide as the picture. An edge anchor drops the
+    strip it registers against, leaving one -- and on that side the two
+    rectangles coincide, which is the point of dropping it.
     """
-    cfg = replace(_overflowing(), rig=replace(_overflowing().rig, anchor="left"))
+    cfg = _overflowing(anchor)
     scale, ox, oy = preview.fit_transform(cfg, preview.marks(cfg))
     vx, vy, vw, vh = preview.video_rect(cfg, scale, ox, oy)
     gx, gy, gw, gh = preview.ghost_rect(cfg, scale, ox, oy)
@@ -451,9 +469,11 @@ def test_the_ghost_covers_more_than_the_live_picture():
     assert gx <= vx and gy <= vy
     assert gx + gw >= vx + vw and gy + gh >= vy + vh
     assert (gw, gh) != (vw, vh), "the still must reach further than the preview"
-    # The visible band is the middle 84.4% of the width, so the still is
-    # about 1/0.844 as wide as the picture.
-    assert gw / vw == pytest.approx(1 / 0.84375, rel=0.02)
+    # 1536 of 1296 with both strips, 1416 of 1296 with one.
+    assert gw / vw == pytest.approx((1296 + strips * 120) / 1296, rel=0.02)
+    # The dropped strip is the one on the anchored edge, so the video starts
+    # exactly where the scannable area does.
+    assert (gx == vx) is (anchor == "left")
 
 
 def test_writing_a_ghost_leaves_a_hole_for_the_live_picture(tmp_path, monkeypatch):
@@ -463,7 +483,7 @@ def test_writing_a_ghost_leaves_a_hole_for_the_live_picture(tmp_path, monkeypatc
     from camscan_escl import config as config_mod
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
-    cfg = replace(_overflowing(), rig=replace(_overflowing().rig, anchor="left"))
+    cfg = _overflowing("left")
     scan = Image.new("RGB", (1536, 2304), (20, 200, 40))   # unmistakable green
 
     path = preview.write_ghost(cfg, scan)
@@ -504,7 +524,7 @@ def test_changing_the_paper_sizes_redraws_the_ghost_rather_than_losing_it(
     from camscan_escl import config as config_mod
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
-    base = replace(_overflowing(), rig=replace(_overflowing().rig, anchor="left"))
+    base = _overflowing("left")
     preview.save_scan_still(base, Image.new("RGB", (2304, 1536), (20, 200, 40)))
     first = preview.rebuild_ghost(base)
     assert first is not None
@@ -533,7 +553,7 @@ def test_a_rotation_change_reorients_the_stored_still(tmp_path, monkeypatch):
     from camscan_escl import config as config_mod
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
-    base = replace(_overflowing(), rig=replace(_overflowing().rig, anchor="left"))
+    base = _overflowing("left")
     preview.save_scan_still(base, Image.new("RGB", (2304, 1536), (20, 200, 40)))
     assert preview.rebuild_ghost(base) is not None
 
@@ -568,11 +588,14 @@ def test_the_ghost_survives_when_nothing_overflows(tmp_path, monkeypatch):
     assert path is not None and path.exists(), "no overflow must not mean no ghost"
     assert preview.usable_ghost(cfg) == str(path)
 
-    # And it covers the strip the stream does not reach.
+    # And it covers the strip the stream does not reach. One strip, not two:
+    # this anchor registers against the left edge, so that strip is gone from
+    # the scannable area and the two rectangles start on the same line.
     scale, ox, oy = preview.fit_transform(cfg, preview.marks(cfg))
     vx, _vy, vw, _vh = preview.video_rect(cfg, scale, ox, oy)
     gx, _gy, gw, _gh = preview.ghost_rect(cfg, scale, ox, oy)
-    assert gx < vx and gx + gw > vx + vw
+    assert gx == vx, "the anchored edge is the edge of the picture"
+    assert gx + gw > vx + vw, "the far strip is still there to draw on"
 
 
 def test_the_ghost_can_be_turned_off(tmp_path, monkeypatch):
@@ -680,15 +703,20 @@ def test_a_mark_can_only_have_its_papers_aspect(landscape, rotate):
     correct configuration anyway: otherwise the mapping is anisotropic and
     every mark is distorted along with every scan.
     """
-    # The coverage describes the frame AFTER rotation, so a turned camera
-    # needs a portrait coverage for the mapping to be isotropic at all.
-    coverage = (200.0, 300.0) if rotate % 180 == 90 else (300.0, 200.0)
-    cfg = replace(
+    base = replace(
         Config(),
-        rig=replace(Config().rig, coverage_mm=coverage, anchor="top-left"),
+        rig=replace(Config().rig, anchor="top-left"),
         capture=replace(Config().capture, rotate_deg=rotate),
         preview=replace(Config().preview, landscape=landscape),
     )
+    # Derived, not written down: the coverage describes the SCANNABLE AREA
+    # after rotation, and an edge anchor has already trimmed a strip off it.
+    # A hardcoded pair here silently stopped matching the frame the moment
+    # the anchored strip started being dropped, and every mark came out
+    # stretched by exactly that strip.
+    fw, fh = preview.upright_still(base)
+    cfg = replace(base, rig=replace(base.rig,
+                                    coverage_mm=(200.0, 200.0 * fh / fw)))
     for mark in preview.marks(cfg):
         paper = next(p for p in cfg.preview.papers if p[0] == mark.name)
         want = paper[1] / paper[2]
@@ -917,3 +945,110 @@ def test_zoom_out_filters_come_after_the_turn():
     assert chain.startswith("transpose")
     assert "scale=" in chain and "pad=" in chain
     assert chain.index("transpose") < chain.index("scale=") < chain.index("drawbox")
+
+
+# -- the streaming mode is a free variable ------------------------------------
+
+# The C920's exact-16:9 MJPG modes, read off the camera by ioctl. Written down
+# here so the derivation can be checked without hardware; `available_modes`
+# asks the camera, and a different camera has a different list.
+MAPPABLE = [(1920, 1080), (1280, 720), (1024, 576), (640, 360), (320, 180),
+            (160, 90)]
+
+
+@pytest.mark.parametrize("width,height", MAPPABLE)
+def test_every_mappable_mode_derives_the_same_rig(width, height):
+    """Changing the mode changes the canvas and nothing about the rig.
+
+    This is what makes the mode a free variable: the band, the strip the
+    anchor drops, and the scannable area are properties of the camera and the
+    anchor. The mode only decides how many pixels the canvas carries.
+    """
+    cfg = replace(
+        Config(),
+        rig=replace(Config().rig, anchor="left", coverage_mm=(210.0, 341.7)),
+        capture=replace(Config().capture, rotate_deg=270),
+        preview=replace(Config().preview, width=width, height=height),
+    )
+    validate(cfg)
+    assert preview.is_mappable(width, height)
+    assert preview.upright_still(cfg) == (1416, 2304)
+    x0, _y0, x1, _y1 = preview.raw_visible_still_region(cfg)
+    assert (x0, x1 - x0) == pytest.approx((120.0, 1296.0))
+    # The canvas IS the mode, scaled to the scannable area, so the video
+    # starts on the anchored edge whatever the mode.
+    assert preview.stream_origin(cfg)[0] == 0
+    # The band is published unresampled, and on a 3:2 still the band is 16:9,
+    # so the canvas's long axis lands exactly on the mode's long one. Compared
+    # by max because the transpose swaps which axis that is.
+    assert max(preview.preview_size(cfg)) == max(width, height)
+
+
+def test_a_bigger_mode_is_a_bigger_canvas_and_nothing_else():
+    def geometry(width, height):
+        cfg = replace(
+            Config(),
+            rig=replace(Config().rig, anchor="left", coverage_mm=(210.0, 341.7)),
+            capture=replace(Config().capture, rotate_deg=270),
+            preview=replace(Config().preview, width=width, height=height),
+        )
+        return (preview.preview_size(cfg), preview.upright_still(cfg),
+                tuple(round(v, 4) for v in preview.streamed_mm(cfg)))
+
+    small_canvas, small_area, small_mm = geometry(1280, 720)
+    large_canvas, large_area, large_mm = geometry(1920, 1080)
+    assert large_canvas > small_canvas
+    assert large_area == small_area, "the scannable area must not move"
+    assert large_mm == small_mm, "the streamed band must not move"
+
+
+def test_the_chooser_and_the_validator_agree_on_every_mode():
+    """One rule, one place. A size the chooser hides but `validate` accepts
+    would be the daemon holding two opinions about the same mode."""
+    for width, height in [(1920, 1080), (1280, 720), (800, 448), (1600, 896),
+                          (640, 480), (960, 720), (176, 144), (432, 240)]:
+        cfg = replace(Config(), preview=replace(Config().preview,
+                                                width=width, height=height))
+        accepted = True
+        try:
+            validate(cfg)
+        except ValueError:
+            accepted = False
+        assert preview.is_mappable(width, height) is accepted, (width, height)
+
+
+def test_near_sixteen_by_nine_is_offered_and_derives_a_smaller_band():
+    """Nothing assumes an exact ratio. The C920's 800x448 is 1.7857, so the
+    band it sees is 1290 rows rather than 1296, and the strip grows to suit."""
+    assert preview.is_mappable(800, 448)
+    assert not preview.is_mappable(640, 480)      # 4:3, measured as different
+    cfg = replace(Config(), preview=replace(Config().preview,
+                                            width=800, height=448))
+    _x0, y0, _x1, y1 = preview.raw_visible_still_region(cfg)
+    assert (y1 - y0) == pytest.approx(1290.24)
+    assert y0 == pytest.approx(122.88)
+
+
+def test_the_mode_travels_through_the_settings_api(tmp_path):
+    import json
+
+    from camscan_escl.config import apply_adjustments, save_adjustments
+
+    cfg = Config()
+    assert (cfg.preview.width, cfg.preview.height) == (1280, 720)
+    moved = apply_adjustments(cfg, {"preview_mode": [1920, 1080]})
+    validate(moved)
+    assert (moved.preview.width, moved.preview.height) == (1920, 1080)
+
+    saved = json.loads(save_adjustments(moved, tmp_path / "s.json").read_text())
+    assert saved["preview_mode"] == [1920, 1080]
+    assert apply_adjustments(cfg, saved).preview.width == 1920
+    # Absent leaves it alone, the same as every other adjustment.
+    assert apply_adjustments(moved, {}).preview.width == 1920
+
+
+def test_a_four_by_three_mode_is_refused():
+    cfg = replace(Config(), preview=replace(Config().preview,
+                                            width=640, height=480))
+    with pytest.raises(ValueError, match="16:9"):
+        validate(cfg)

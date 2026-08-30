@@ -69,10 +69,22 @@ rotate_deg = 0              # 90 or 270 if the camera is mounted portrait
 # it back for a scan -- V4L2 access is exclusive, so nothing else can use the
 # camera while this is on. Turn it off to free the device for Kamoso etc.
 enable = true
-# MUST be 16:9. Measured on the C920: 16:9 modes are the still's full width
-# with a centred vertical crop, so preview pixels map onto still pixels
-# exactly. 4:3 modes are zoomed to a narrower field and cannot be mapped --
-# the daemon refuses to start with one rather than draw lying crop marks.
+# The camera's streaming mode. MUST be 16:9. Measured on the C920: 16:9 modes
+# are the still's full width with a centred vertical crop, so preview pixels
+# map onto still pixels exactly. 4:3 modes are zoomed to a narrower field and
+# cannot be mapped -- the daemon refuses to start with one rather than draw
+# lying crop marks.
+#
+# Nothing else needs changing when this does. The canvas, the streamed band,
+# the strip the anchored edge drops, the scale and where every mark lands are
+# all derived from this pair and the still's size. A bigger mode is a sharper
+# preview and nothing else: it does not change what a scan captures.
+#
+# The settings GUI offers whatever this camera reports, so there is no list of
+# one model's modes anywhere in the daemon. It offers only EXACT 16:9 sizes.
+# The C920's 800x448 and 1600x896 are 1.7857 and pass the check below, but the
+# full-width-centred-crop relationship was never measured for them, so they
+# are configurable by hand and not offered.
 width = 1280
 height = 720
 fps = 15
@@ -154,8 +166,30 @@ disable_autofocus = false
 absolute = 0                # only used when disable_autofocus = true
 
 [rig]
-# The physical area the frame covers at rig height, in mm, [width, height],
-# in the orientation the frame ends up after rotate_deg. This is the
-# calibration that makes the units contract correct — measure it with a ruler
-# under the camera, do not assume it.
+# The physical area the SCANNABLE AREA covers at rig height, in mm,
+# [width, height], in the orientation the frame ends up after rotate_deg.
+# This is the calibration that makes the units contract correct — measure it
+# with a ruler under the camera, do not assume it. Set the anchor first: an
+# edge anchor makes the scannable area smaller than the sensor, so a
+# measurement taken before it is 8% wrong after it.
 coverage_mm = [210.0, 297.0]
+
+# Where the scan region sits inside that coverage. Clients always send an
+# origin of 0,0, so without this every scan is pinned to the top left of what
+# the camera sees. One of: top-left, top, top-right, left, center, right,
+# bottom-left, bottom, bottom-right.
+#
+# An EDGE anchor also decides the size of the scannable area. The live
+# preview is 16:9 and the still is 3:2, so the picture is the middle 1296 of
+# the sensor's 1536 rows and a 120-row strip at each end is scannable but
+# never streamed. Take the whole still as the scannable area and its edge —
+# the line an edge-anchored mark is drawn flush against — sits 120 rows
+# outside the picture, and you cannot watch a sheet register against a line
+# you cannot see. So the strip on the anchored edge is dropped, and the two
+# edges become one line.
+#
+# It costs 120 sensor rows, about 8% of the sensor, and it works at any
+# camera height: no particular height is needed to make the marks true. The
+# far strip is kept, and is scanned but never streamed. A centred anchor
+# registers against nothing and keeps both strips.
+anchor = "center"
