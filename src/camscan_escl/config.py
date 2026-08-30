@@ -167,10 +167,10 @@ class DiscoveryConfig:
 class PreviewConfig:
     """A live preview for positioning, with crop marks.
 
-    The size must be a 16:9 mode. Measured on the C920: 16:9 modes are the
-    still's full width with a centred vertical crop, so preview pixels map
-    onto still pixels exactly; 4:3 modes are zoomed to a narrower horizontal
-    field and cannot be mapped by cropping. See preview.py.
+    Any size the camera streams. A mode's field of view is the largest centred
+    rectangle of its shape that fits the sensor, so a mode wider than the
+    sensor crops rows and one taller than it crops columns; either way preview
+    pixels map onto still pixels. See preview.py.
     """
 
     enable: bool = True
@@ -527,18 +527,16 @@ def validate(cfg: Config) -> None:
         raise ValueError("scanner.jpeg_quality must be 1..100")
     if cfg.scanner.resolution_dpi <= 0:
         raise ValueError("scanner.resolution_dpi must be positive")
-    # 16:9 only, and not for tidiness: 4:3 modes on this camera are zoomed to
-    # a narrower horizontal field, so preview pixels cannot be mapped onto
-    # still pixels by cropping and every crop mark would be wrong. Measured;
-    # see preview.py.
+    # Any aspect, now that the preview geometry crops on whichever axis has
+    # the slack. This used to refuse anything but 16:9, which mistook the
+    # measured arm for the whole rule -- a 4:3 mode is a narrower horizontal
+    # field, and that is a crop of columns rather than of rows. What survives
+    # is the size being usable at all. See preview.is_mappable.
     if cfg.preview.enable:
         from .preview import is_mappable
 
-        ratio = cfg.preview.width / cfg.preview.height
         if not is_mappable(cfg.preview.width, cfg.preview.height):
             raise ValueError(
-                f"preview.width/height must be 16:9, got "
-                f"{cfg.preview.width}x{cfg.preview.height}. A 4:3 preview has a "
-                f"different field of view than the still and its crop marks "
-                f"would be wrong."
+                f"preview.width/height must both be positive, got "
+                f"{cfg.preview.width}x{cfg.preview.height}"
             )

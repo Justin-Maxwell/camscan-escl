@@ -8,6 +8,40 @@ saying so in the commit message.
 
 ---
 
+## 11. Half the preview mapping is inferred, not measured
+
+**Status:** open, and cheap to settle — a ruler and two dropdown changes
+**Affects:** every mode taller than the sensor's 3:2, which on the C920 is
+4:3 (160×120, 320×240, 640×480, 800×600, 960×720) and 11:9 (176×144, 352×288)
+
+A mode's field of view is taken to be the largest centred rectangle of its
+shape that fits the sensor. Wider than 3:2 crops rows, taller than 3:2 crops
+columns. That model is what lets any mode be offered, and it is only half
+established.
+
+The **wide** arm is measured: cross-correlating a 1280×720 frame against the
+still put the best match at row 67 where a centred crop predicts 66, RMS 6.3,
+against 32.9 for "the whole frame squashed".
+
+The **tall** arm is not. All that was ever established is that 4:3 is "a
+narrower horizontal field", which the model explains but does not pin down.
+The model predicts 640×480 sees columns 128–2176 of 2304 — full height, 128
+columns lost at each side. If the camera instead crops asymmetrically, or
+crops rows as well, every mark in a 4:3 preview is off by the difference.
+
+**The check needs no code.** Put a sheet under the camera, line it up inside a
+crop mark at 1280×720, then switch the Video dropdown to 640×480 without
+moving the paper. If the model holds, the sheet is still inside the same mark
+— the marks are drawn in millimetres against the coverage, so a correct
+mapping puts them on the same physical place in both modes. If it drifts, the
+tall arm is wrong and only the wide modes should be offered.
+
+Worth doing before trusting a 4:3 preview for positioning. Nothing about a
+scan depends on it: the still is captured in its own mode and the mapping
+here only affects where the marks are drawn.
+
+---
+
 ## 9. Mains frequency: the picture route is still unbuilt
 
 **Status:** the host route is done; the check is not

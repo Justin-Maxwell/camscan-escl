@@ -71,12 +71,21 @@ def test_marks_scale_with_coverage():
     assert after.width == pytest.approx(before.width / 2, abs=1)
 
 
-def test_four_three_preview_is_rejected():
-    # 4:3 modes are zoomed to a narrower horizontal field, so no crop maps
-    # them onto the still and every mark would be wrong.
+def test_four_three_preview_crops_columns_rather_than_rows():
+    """A 4:3 mode is a narrower horizontal field -- which IS a crop, of the
+    other axis. It used to be refused, because the arithmetic behind the
+    refusal only knew how to crop rows.
+
+    2304x1536 holding a 4:3 rectangle at full height gives 2048 wide, so 128
+    columns fall outside the picture at each side instead of 120 rows above
+    and below.
+    """
     cfg = replace(Config(), preview=PreviewConfig(width=640, height=480))
-    with pytest.raises(ValueError, match="16:9"):
-        validate(cfg)
+    validate(cfg)
+    x0, y0, x1, y1 = preview.raw_visible_still_region(cfg)
+    assert (x1 - x0, y1 - y0) == pytest.approx((2048.0, 1536.0))
+    assert (x0, y0) == pytest.approx((128.0, 0.0))
+    assert preview.ghost_axis(cfg) == 0          # across, not down
 
 
 def test_page_reports_what_the_preview_cannot_show():
@@ -1021,7 +1030,6 @@ def test_near_sixteen_by_nine_is_offered_and_derives_a_smaller_band():
     """Nothing assumes an exact ratio. The C920's 800x448 is 1.7857, so the
     band it sees is 1290 rows rather than 1296, and the strip grows to suit."""
     assert preview.is_mappable(800, 448)
-    assert not preview.is_mappable(640, 480)      # 4:3, measured as different
     cfg = replace(Config(), preview=replace(Config().preview,
                                             width=800, height=448))
     _x0, y0, _x1, y1 = preview.raw_visible_still_region(cfg)
@@ -1047,8 +1055,55 @@ def test_the_mode_travels_through_the_settings_api(tmp_path):
     assert apply_adjustments(moved, {}).preview.width == 1920
 
 
-def test_a_four_by_three_mode_is_refused():
+@pytest.mark.parametrize("width,height,axis,slack", [
+    # Wider than the sensor's 3:2: full width, rows cropped.
+    (1920, 1080, 1, 120.0), (1280, 720, 1, 120.0), (800, 448, 1, 122.9),
+    (864, 480, 1, 128.0),                        # 9:5
+    # Taller than it: full height, columns cropped. The other axis entirely.
+    (640, 480, 0, 128.0), (960, 720, 0, 128.0),  # 4:3
+    (352, 288, 0, 213.3),                        # 11:9
+])
+def test_every_reachable_mode_crops_on_the_axis_with_the_slack(
+        width, height, axis, slack):
+    """The whole camera's list, not one aspect of it. The strip is on the axis
+    the mode's shape leaves slack on, and `ghost_axis` finds it by measuring
+    rather than by assuming which one it is."""
     cfg = replace(Config(), preview=replace(Config().preview,
-                                            width=640, height=480))
-    with pytest.raises(ValueError, match="16:9"):
-        validate(cfg)
+                                            width=width, height=height))
+    validate(cfg)
+    assert preview.ghost_axis(cfg) == axis
+    x0, y0, x1, y1 = preview.raw_visible_still_region(cfg)
+    sw, sh = preview.raw_upright_still(cfg)
+    measured = (sw - (x1 - x0)) / 2 if axis == 0 else (sh - (y1 - y0)) / 2
+    assert measured == pytest.approx(slack, abs=0.1)
+    # And nothing is cropped on the other axis: it is a crop, not a rescale.
+    other = (sh - (y1 - y0)) if axis == 0 else (sw - (x1 - x0))
+    assert other == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("width,height", [(640, 480), (352, 288), (960, 720)])
+def test_a_turned_camera_moves_the_strips_to_the_vertical_edges(width, height):
+    """The case one-axis arithmetic could not reach at all.
+
+    A mode taller than the sensor crops columns; turn the camera and those
+    columns become upright ROWS, so the unstreamed strips sit above and below
+    the picture rather than beside it. The anchor's vertical component then
+    decides which one the scannable area drops.
+    """
+    cfg = replace(
+        Config(),
+        capture=replace(Config().capture, rotate_deg=270),
+        preview=replace(Config().preview, width=width, height=height),
+        rig=replace(Config().rig, anchor="top-left"),
+    )
+    validate(cfg)
+    assert preview.ghost_axis(cfg) == 1          # down, not across
+    assert preview.fence_edge(cfg) == "low"      # the top edge
+    # The top strip is gone, so the picture starts at the top of the canvas.
+    # Within a pixel, not exactly: the crop box has to be whole pixels, and a
+    # strip of 213.33 rounds to 213, leaving the band a third of a pixel in.
+    assert preview.visible_still_region(cfg)[1] == pytest.approx(0.0, abs=1.0)
+    assert preview.stream_origin(cfg)[1] == 0
+    # And the far strip survives below it.
+    _x0, _y0, _x1, y1 = preview.visible_still_region(cfg)
+    assert preview.upright_still(cfg)[1] - y1 > 0

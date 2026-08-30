@@ -403,21 +403,30 @@ the camera for Kamoso or similar, set `preview.enable = false` (or run with
 
 **The preview does not show everything the scan captures.** The still is
 2304×1536 (3:2) and on the C920 that is the only 3:2 mode; every streamable
-mode is 16:9 or 4:3. Measured here: 16:9 modes are the still's full width with
-a centred vertical crop, so the preview shows the middle 1296 of 1536 rows and
-**the scanner sees 120 rows more at the top and bottom**. The page says so, and
-marks that leave the frame are labelled. With an edge anchor it is one edge
-rather than two, and the page says which.
+mode is some other shape. Measured here: 16:9 modes are the still's full width
+with a centred vertical crop, so the preview shows the middle 1296 of 1536
+rows and **the scanner sees 120 rows more at the top and bottom**. In a mode
+taller than 3:2 it is columns instead — 4:3 shows the middle 2048 of 2304, so
+the scanner sees 128 columns more at each side. The page says which, and marks
+that leave the frame are labelled. With an edge anchor it is one edge rather
+than two.
 
 **The streaming mode is a free variable.** The settings window's *Video*
 dropdown lists whatever this camera reports — asked of the driver, not a list
 baked into the daemon — and picking one changes only how many pixels the
-preview carries. The canvas, the band, the strip the anchored edge drops and
-where every mark lands are all derived, so nothing else needs touching, and
-what a scan captures does not move. On the C920 that runs from 160×90 to
-1920×1080; the largest gives a 1180×1920 canvas against 787×1280 at the
-default. Only exact 16:9 sizes are offered, and the daemon refuses to start
-with a 4:3 preview rather than draw crop marks that lie.
+preview carries. The canvas, the band, which axis the strips fall on, the
+strip the anchored edge drops and where every mark lands are all derived, so
+nothing else needs touching, and what a scan captures does not move. On the
+C920 that is 17 sizes across six aspect ratios, from 160×90 to 1920×1080; the
+largest gives a 1180×1920 canvas against 787×1280 at the default.
+
+A mode's field of view is the largest centred rectangle of its shape that fits
+the sensor. **Which axis the unstreamed strips fall on depends on the mode**,
+not just on the camera's rotation: 16:9 on a 3:2 sensor keeps the full width
+and leaves 120 rows over, while 4:3 keeps the full height and leaves 128
+columns over. Turn the camera and those move again — a 4:3 preview on a
+portrait-mounted camera puts the strips above and below the picture, so a
+`top-left` anchor drops the top one.
 
 ## Calibrate before trusting the output
 

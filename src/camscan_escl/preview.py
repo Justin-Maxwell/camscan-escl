@@ -16,12 +16,20 @@ preview cannot share the still's framing exactly. Measured on this rig:
     Cross-correlating a 1280x720 frame against the still scaled to 1280 wide
     put the best match at row 67 where a centred crop predicts 66, RMS 6.3;
     the "whole frame squashed" hypothesis scored 32.9, five times worse.
-  - 4:3 modes are zoomed in -- a narrower horizontal field -- so they cannot
-    be mapped by cropping alone. Do not preview in 4:3.
+  - 4:3 modes are a NARROWER HORIZONTAL FIELD. Which is the same thing on the
+    other axis: full height, centred crop of columns.
 
-So a 16:9 preview shows the middle 1296 of the still's 1536 rows: the
-scanner sees 120 rows MORE at the top and bottom than you can see. Crop
-marks must show that, or they lie about what will be captured.
+Generalised, a mode's field of view is the largest centred rectangle of its
+shape that fits the sensor. Wider than 3:2 crops rows, taller than 3:2 crops
+columns, and the slack is on whichever axis the shape leaves it. So a 16:9
+preview shows the middle 1296 of the still's 1536 rows and a 4:3 preview the
+middle 2048 of its 2304 columns. Either way the scanner sees more than you
+do, and crop marks must show that or they lie about what will be captured.
+
+Only the wide arm is cross-correlated. The tall arm is the same mechanism
+predicted onto the other axis -- 4:3 was established to be a narrower
+horizontal field, which this explains, but the extent was never measured. See
+docs/ISSUES.md for how to check it with a ruler.
 
 THE ANCHORED EDGE. A rig registers a sheet by pushing it against a rail, and
 the crop mark for that sheet is drawn flush against the same edge of the
@@ -107,16 +115,14 @@ def is_mappable(width: int, height: int) -> bool:
     holding two opinions about the same mode, and the stricter of the two
     would be wherever someone happened to look last.
 
-    16:9 within a tolerance, because the measured relationship -- full width,
-    centred vertical crop -- was established for 16:9 and disproved for 4:3, a
-    narrower field of view that no crop maps. The tolerance is wide enough to
-    admit a camera's near-16:9 sizes (the C920 has 800x448 and 1600x896 at
-    1.7857) and nowhere near wide enough to admit 4:3 at 1.333. Nothing here
-    assumes an exact ratio: the band is computed from the size in
-    `raw_visible_still_region`, so 1.7857 yields a 1290-row band rather than
-    1296 and everything downstream follows.
+    Any positive size, now that `raw_visible_still_region` crops on whichever
+    axis has the slack. This used to be 16:9 within a tolerance, which was the
+    measured arm mistaken for the whole rule: a 4:3 mode is a narrower
+    horizontal field, and a narrower horizontal field IS a crop, just of
+    columns rather than rows. What the tolerance actually protected was the
+    one-axis arithmetic behind it, and that is gone.
     """
-    return abs(width / height - 16 / 9) <= 0.01
+    return width > 0 and height > 0
 
 
 def available_modes(cfg: Config) -> list[devices.StreamMode]:
@@ -160,11 +166,15 @@ def raw_upright_still(cfg: Config) -> tuple[int, int]:
 def ghost_axis(cfg: Config) -> int:
     """Which upright axis carries the two unstreamed strips. 0 across, 1 down.
 
-    A 16:9 stream of a 3:2 still is the still's full width with a centred
-    vertical crop, so the strips lie on the sensor's row axis. The transpose
-    carries them to the sides.
+    Measured off the region rather than assumed from the rotation, because the
+    strips are not always on the same axis: a mode wider than the sensor's 3:2
+    leaves slack in rows, a mode taller than it leaves slack in columns, and
+    the transpose then moves whichever it is. Deriving it means a 4:3 preview
+    on a turned camera correctly puts the strips at the top and bottom.
     """
-    return 0 if cfg.capture.rotate_deg % 180 == 90 else 1
+    sw, sh = raw_upright_still(cfg)
+    x0, y0, x1, y1 = raw_visible_still_region(cfg)
+    return 0 if (sw - (x1 - x0)) >= (sh - (y1 - y0)) else 1
 
 
 def fence_edge(cfg: Config) -> str | None:
@@ -309,19 +319,32 @@ def turn_mark(mark: Mark, rotate_deg: int, sensor: tuple[int, int]) -> Mark:
 def raw_visible_still_region(cfg: Config) -> tuple[float, float, float, float]:
     """Which part of the WHOLE upright still the preview can show, in pixels.
 
-    The measured relationship is about the sensor: a 16:9 preview is the
-    still's full width with a centred vertical crop. Turn the camera and that
-    band moves to the sides, because the whole frame has turned with it.
+    The largest centred rectangle of the mode's shape that fits the sensor.
+    A mode WIDER than the sensor's 3:2 keeps the full width and crops rows; a
+    mode TALLER than it keeps the full height and crops columns. Either way
+    the field of view is a centred crop, never a rescale, so preview pixels
+    map onto still pixels.
+
+    The wide arm is measured: cross-correlating a 1280x720 frame against the
+    still put the best match at row 67 where a centred crop predicts 66, RMS
+    6.3, against 32.9 for "the whole frame squashed". The tall arm is the same
+    mechanism on the other axis and is NOT separately measured -- 4:3 was only
+    ever established to be a narrower horizontal field, which this predicts
+    but does not confirm the extent of. See docs/ISSUES.md.
+
+    Turn the camera and the crop turns with it, because the whole frame has.
     """
     sw, sh = cfg.capture.native_width, cfg.capture.native_height
     pw, ph = cfg.preview.width, cfg.preview.height
-    scale = pw / sw
-    visible_h = ph / scale
-    y0 = (sh - visible_h) / 2
+    if pw * sh >= ph * sw:          # mode is wider: full width, crop rows
+        visible_w, visible_h = float(sw), sw * ph / pw
+    else:                           # mode is taller: full height, crop columns
+        visible_w, visible_h = sh * pw / ph, float(sh)
+    x0, y0 = (sw - visible_w) / 2, (sh - visible_h) / 2
     if cfg.capture.rotate_deg % 180 == 90:
-        # Sensor rows become upright columns.
-        return (y0, 0.0, y0 + visible_h, float(sw))
-    return (0.0, y0, float(sw), y0 + visible_h)
+        # Sensor rows become upright columns, and columns become rows.
+        return (y0, x0, y0 + visible_h, x0 + visible_w)
+    return (x0, y0, x0 + visible_w, y0 + visible_h)
 
 
 def visible_still_region(cfg: Config) -> tuple[float, float, float, float]:
