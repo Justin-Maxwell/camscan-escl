@@ -447,6 +447,16 @@ camscan-escl --focus-sweep
   noise as much as detail, so look at the frames rather than trusting the
   ranking, and compare against what autofocus settles on.
 
+- **`capture.image.power_line_frequency`** — on by default, as `"auto"`, and
+  it should need no attention. The camera cancels flicker at the mains
+  frequency, and the C920 powers up expecting 60 Hz; on a 50 Hz grid that
+  bands the picture under artificial light and reads as a bad camera rather
+  than a bad setting. `"auto"` takes the host's timezone from
+  `/etc/localtime` and looks it up, so a New Zealand host pins 50 without
+  being asked. Set `"50"` or `"60"` outright for a rig running off a grid its
+  host is not on, `"disabled"` to turn the camera's filter off, or `""` to
+  leave the control wherever something else left it.
+
 - **`capture.exposure`** — off by default, and worth turning on. Left on
   auto, the sensor re-decides every capture: a scan on this rig came back with
   89% of its pixels at 250+ luma from a scene that metered correctly minutes

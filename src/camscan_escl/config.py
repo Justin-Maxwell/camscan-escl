@@ -104,6 +104,18 @@ class ImageConfig:
     device: str = ""          # empty: follow capture.device
     brightness: int | None = None
     contrast: int | None = None
+    # The mains frequency the camera should cancel, as a string:
+    #
+    #   "auto"      work it out from the host's timezone (the default)
+    #   "50" / "60" state it, for a rig running off a grid the host is not on
+    #   "disabled"  turn the camera's filter off entirely
+    #   ""          leave the control alone, whatever last set it
+    #
+    # Pinned for the same reason focus and exposure are: V4L2 state lives on
+    # the device and survives whatever last touched it, and the C920's own
+    # default is 60 Hz. On a 50 Hz grid that bands the picture under
+    # artificial light, which reads as a bad camera rather than a bad setting.
+    power_line_frequency: str = "auto"
 
 
 @dataclass(frozen=True)

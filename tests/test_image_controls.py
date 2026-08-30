@@ -212,3 +212,93 @@ def test_spread_measures_tonal_range():
         for x in range(100):
             mixed.putpixel((x, y), 50)
     assert capture.spread(mixed) > 100
+
+
+# -- mains frequency ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("zone,hertz", [
+    ("Pacific/Auckland", 50),
+    ("Europe/London", 50),
+    ("Africa/Nairobi", 50),
+    ("Asia/Tokyo", 50),          # Tokyo is the 50 Hz half of Japan
+    ("America/New_York", 60),
+    ("America/Chicago", 60),
+    ("America/Mexico_City", 60),
+    ("America/Sao_Paulo", 60),
+    ("America/Bogota", 60),
+    ("Asia/Manila", 60),
+    ("Asia/Seoul", 60),
+    ("Pacific/Honolulu", 60),
+    ("Africa/Monrovia", 60),     # alone in Africa
+    # The 50 Hz southern cone and the European territories, inside America/.
+    ("America/Argentina/Buenos_Aires", 50),
+    ("America/Santiago", 50),
+    ("America/Asuncion", 50),
+    ("America/Montevideo", 50),
+    ("America/La_Paz", 50),
+    ("America/Cayenne", 50),     # France
+    ("America/Nuuk", 50),        # Denmark
+    (None, 50),                  # unknown: the world default, not a guess
+    ("", 50),
+])
+def test_mains_frequency_from_the_timezone(zone, hertz):
+    assert capture.mains_frequency(zone) == hertz
+
+
+@pytest.mark.parametrize("setting,value", [
+    ("50", 1), ("60", 2), ("disabled", 0),
+    ("AUTO", None), ("auto", None),          # resolved from the host, below
+    ("", None), ("nonsense", None),
+])
+def test_power_line_setting_maps_to_the_v4l2_menu(setting, value, monkeypatch):
+    if setting.lower() == "auto":
+        # Pin the host so the answer is about the mapping, not this machine.
+        monkeypatch.setattr(capture, "host_timezone", lambda: "America/Denver")
+        assert capture.power_line_setting(setting) == 2
+        monkeypatch.setattr(capture, "host_timezone", lambda: "Europe/Berlin")
+        assert capture.power_line_setting(setting) == 1
+    else:
+        assert capture.power_line_setting(setting) == value
+
+
+def test_the_tz_environment_variable_wins(monkeypatch):
+    """A process told it is somewhere else is somewhere else."""
+    monkeypatch.setenv("TZ", "America/New_York")
+    assert capture.host_timezone() == "America/New_York"
+    monkeypatch.setenv("TZ", ":America/New_York")     # the leading-colon form
+    assert capture.host_timezone() == "America/New_York"
+    # Not a zone name, so fall through to the host rather than trust it.
+    monkeypatch.setenv("TZ", "NZST-12")
+    assert capture.host_timezone() != "NZST-12"
+
+
+def test_apply_image_pins_the_frequency_with_no_picture_settings(monkeypatch):
+    """Brightness and contrast default to None, and used to mean an early
+    return. The frequency has to go to the device regardless."""
+    from dataclasses import replace
+
+    from camscan_escl.config import Config
+
+    sent = []
+    monkeypatch.setattr(capture, "_set_controls",
+                        lambda dev, steps, t, what: sent.extend(steps))
+    cfg = replace(Config().capture, image=replace(
+        Config().capture.image, power_line_frequency="50"))
+    assert (cfg.image.brightness, cfg.image.contrast) == (None, None)
+    capture.apply_image(cfg, device="/dev/video-test")
+    assert sent == ["power_line_frequency=1"]
+
+
+def test_an_empty_setting_leaves_the_control_alone(monkeypatch):
+    from dataclasses import replace
+
+    from camscan_escl.config import Config
+
+    sent = []
+    monkeypatch.setattr(capture, "_set_controls",
+                        lambda dev, steps, t, what: sent.extend(steps))
+    cfg = replace(Config().capture, image=replace(
+        Config().capture.image, power_line_frequency=""))
+    capture.apply_image(cfg, device="/dev/video-test")
+    assert sent == []

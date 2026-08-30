@@ -8,35 +8,31 @@ saying so in the commit message.
 
 ---
 
-## 9. Mains frequency is never set, and the camera's default is wrong here
+## 9. Mains frequency: the picture route is still unbuilt
 
-**Status:** open
+**Status:** the host route is done; the check is not
 **Control:** `power_line_frequency` — 0 Disabled, 1 = 50 Hz, 2 = 60 Hz
+**Config:** `capture.image.power_line_frequency`, default `"auto"`
 
-Currently reads **1 (50 Hz)**, which is right for New Zealand. But the C920's
-**default is 2 (60 Hz)**, and the daemon never sets it. Nothing here put it on
-50 — something else did, and a replug or a module reload will silently put it
-back to 60, which bands the picture under artificial light at 50 Hz mains.
+The daemon now pins this before the preview opens the camera and again before
+every capture, from `capture.image.power_line_frequency`. `"auto"` reads the
+host's IANA zone from `/etc/localtime` (or `TZ`) and looks it up: 50 Hz is the
+world default, only the 60 Hz regions are listed, and the 50 Hz islands inside
+them — the southern cone, Greenland, the French territories — are named back.
+Verified on this rig by setting the camera to 60, restarting, and reading it
+back at 50.
 
-Same hazard class as issue 8: persistent V4L2 state the daemon depends on and
-does not own. Unlike pan/tilt/zoom this one costs image quality rather than
-geometry, so it will look like a bad camera rather than a bad setting.
+What remains is the *picture* route, which was always the better check rather
+than the first build. Under artificial light a mismatched setting produces
+banding that beats at the difference frequency: capture a short run at fixed
+exposure, look for horizontal periodicity, and pick whichever setting shows
+less. Self-correcting, and it needs no table — but it needs artificial light
+to decide at all, so it can only ever confirm or contradict the host route,
+never replace it.
 
-Should be pinned alongside focus and exposure, with a config key.
-
-**Autodetection** — Justin's instinct is that it should not need asking, and
-there are two routes:
-
-- *From the host.* `timedatectl` gives `Pacific/Auckland`; most of the world is
-  50 Hz, the Americas and a few others 60. A timezone-to-frequency table is
-  small, static and gets it right nearly everywhere. Cheap, and wrong only for
-  someone running the rig outside their own grid.
-- *From the picture.* Under artificial light a mismatched setting produces
-  banding that beats at the difference frequency. Capture a short run at fixed
-  exposure, look for horizontal periodicity, pick whichever setting has less.
-  Robust and self-correcting, but needs artificial light to decide at all.
-
-The host route is the one to build first; the picture route is the check.
+The table's known weak spot is a country running both frequencies. `Asia/Tokyo`
+resolves to 50, which is right for Tokyo and wrong for Osaka, and no timezone
+can tell them apart. The picture route would settle exactly that case.
 
 ---
 

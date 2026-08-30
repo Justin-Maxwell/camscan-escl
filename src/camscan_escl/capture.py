@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import statistics
 import subprocess
@@ -164,6 +165,87 @@ def apply_focus(cfg: CaptureConfig) -> None:
 # different feature, and most of them are not about photographing paper.
 IMAGE_CONTROLS = ("brightness", "contrast")
 
+# The V4L2 control, and its menu. 0 Disabled, 1 = 50 Hz, 2 = 60 Hz.
+POWER_LINE_CONTROL = "power_line_frequency"
+POWER_LINE_VALUES = {"disabled": 0, "50": 1, "60": 2}
+
+# Mains frequency from the host's timezone. 50 Hz is most of the world, so
+# only the 60 Hz regions are listed and everything else falls through to 50.
+# Wrong only for a rig running off a grid its host is not on, which is what
+# stating "50" or "60" in the config is for.
+SIXTY_HZ = (
+    "America/",             # North and Central America, the Caribbean, and
+                            # most of South America -- exceptions below
+    "Pacific/Honolulu", "Pacific/Guam", "Pacific/Saipan", "Pacific/Midway",
+    "Pacific/Pago_Pago", "Pacific/Wake", "Pacific/Johnston",
+    "Asia/Manila", "Asia/Seoul", "Asia/Taipei", "Asia/Riyadh",
+    "Africa/Monrovia",      # Liberia, alone in Africa
+)
+
+# 50 Hz islands inside those prefixes. The southern cone runs at 50, as do the
+# French and Danish territories in the Americas.
+FIFTY_HZ_WITHIN = (
+    "America/Argentina", "America/Buenos_Aires", "America/Cordoba",
+    "America/Catamarca", "America/Jujuy", "America/Mendoza", "America/Rosario",
+    "America/Santiago", "America/Punta_Arenas",     # Chile
+    "America/Asuncion",                             # Paraguay
+    "America/Montevideo",                           # Uruguay
+    "America/La_Paz",                               # Bolivia
+    "America/Cayenne", "America/Miquelon",          # France
+    "America/Nuuk", "America/Godthab", "America/Thule",
+    "America/Scoresbysund", "America/Danmarkshavn",  # Greenland
+)
+
+
+def host_timezone() -> str | None:
+    """The host's IANA zone name, or None if it cannot be established.
+
+    From the /etc/localtime symlink, which is where systemd-timedated puts it
+    and what `timedatectl` reads back. TZ wins when set, since a process told
+    to be somewhere else is somewhere else.
+    """
+    env = os.environ.get("TZ", "").strip().lstrip(":")
+    if "/" in env:
+        return env
+    try:
+        target = os.path.realpath("/etc/localtime")
+    except OSError:
+        return None
+    marker = "/zoneinfo/"
+    index = target.find(marker)
+    return target[index + len(marker):] if index >= 0 else None
+
+
+def mains_frequency(zone: str | None) -> int:
+    """50 or 60, for an IANA zone name. 50 when the zone is unknown."""
+    if not zone:
+        return 50
+    if any(zone.startswith(p) for p in FIFTY_HZ_WITHIN):
+        return 50
+    return 60 if any(zone.startswith(p) for p in SIXTY_HZ) else 50
+
+
+def power_line_setting(value: str) -> int | None:
+    """The V4L2 menu value for a `power_line_frequency` config setting.
+
+    None means leave the control alone. An unrecognised setting is a config
+    error rather than a reason to pick something, so it warns and leaves it.
+    """
+    text = (value or "").strip().lower()
+    if not text:
+        return None
+    if text == "auto":
+        zone = host_timezone()
+        hertz = mains_frequency(zone)
+        log.info("mains frequency %d Hz, from timezone %s", hertz, zone or "unknown")
+        return POWER_LINE_VALUES[str(hertz)]
+    if text in POWER_LINE_VALUES:
+        return POWER_LINE_VALUES[text]
+    log.warning(
+        "capture.image.power_line_frequency=%r is not one of auto, 50, 60, "
+        "disabled or empty; leaving the control alone", value)
+    return None
+
 
 def control_ranges(device: str, timeout_s: int = 10,
                    names: tuple[str, ...] = IMAGE_CONTROLS) -> dict[str, dict]:
@@ -233,6 +315,13 @@ def apply_image(cfg: CaptureConfig, device: str | None = None) -> None:
     settings = {name: getattr(cfg.image, name) for name in IMAGE_CONTROLS}
     steps = [f"{name}={value}" for name, value in settings.items()
              if value is not None]
+    # Alongside brightness and contrast because it is the same kind of thing:
+    # persistent V4L2 state the daemon depends on and does not own. Unlike
+    # them it is pinned by default, since the C920 powers up on 60 Hz and a
+    # replug silently puts it back there.
+    mains = power_line_setting(cfg.image.power_line_frequency)
+    if mains is not None:
+        steps.append(f"{POWER_LINE_CONTROL}={mains}")
     if not steps:
         return
     if device is None:

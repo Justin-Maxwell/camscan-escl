@@ -144,6 +144,25 @@ Letter = [215.9, 279.4]
 # brightness = 128
 # contrast = 128
 
+# The mains frequency the camera cancels, so artificial light does not band
+# the picture. Pinned for the same reason focus and exposure are: V4L2 state
+# lives on the device and survives whatever last touched it, and the C920's
+# own default is 60 Hz — so a replug or a module reload silently puts a 50 Hz
+# rig back onto banding.
+#
+#   "auto"      work it out from the host timezone (the default)
+#   "50" / "60" state it, for a rig running off a grid the host is not on
+#   "disabled"  turn the camera's filter off entirely
+#   ""          leave the control alone, whatever last set it
+#
+# "auto" reads /etc/localtime (or TZ) and looks the zone up: 50 Hz is the
+# world default and only the 60 Hz regions are listed, with the 50 Hz islands
+# inside them — the southern cone, Greenland, the French territories — named
+# back. It is wrong only for a rig on a grid its host is not on, which is what
+# stating the number is for. Asia/Tokyo resolves to 50, being the eastern
+# half of a country that runs both.
+power_line_frequency = "auto"
+
 [capture.exposure]
 # Off by default: the right numbers are rig-specific, and a wrong pinned
 # exposure is worse than a variable one. Turn this on once you have measured

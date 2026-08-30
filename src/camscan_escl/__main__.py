@@ -195,6 +195,11 @@ def main(argv: list[str] | None = None) -> int:
             logging.error("%s: %s could not be resolved -- %s",
                           entry["name"], entry["spec"], entry["detail"])
 
+    # Before the preview opens the camera, not only before a capture. The
+    # mains-frequency filter is what stops artificial light banding the
+    # picture, and the picture you look at all day is the preview's.
+    capture.apply_image(cfg.capture)
+
     stream = preview.PreviewStream(cfg)
     httpd = serve(cfg, stream)
     if not args.no_preview:
