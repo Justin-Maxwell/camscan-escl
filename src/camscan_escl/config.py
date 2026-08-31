@@ -195,6 +195,16 @@ class PreviewConfig:
     # the border counted as wanted and went undimmed -- leaving a strip with
     # no picture in it looking like part of the scene.
     outside_colour: str = "gray@0.55"
+    # Tint over the part of a crop mark that falls outside the scannable
+    # area. That part of the sheet is not captured, and the mark alone does
+    # not say so: a rectangle running off the canvas looks the same as one
+    # the zoom-out made room for. Blended over the padding, so it reads as a
+    # warning laid on the picture rather than as another paper size.
+    #
+    # Orangered rather than red: red is the first entry in MARK_COLOURS, so a
+    # red wash under a red border would leave the commonest paper size unable
+    # to say which of the two it was.
+    overflow_colour: str = "orangered@0.4"
     # Draw the crop marks across the frame. Purely about the marks: eSCL
     # carries orientation in the requested region's own dimensions -- a
     # landscape scan is one wider than it is tall -- so a client asking for

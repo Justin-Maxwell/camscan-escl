@@ -83,11 +83,17 @@ class Mark:
     y: int
     width: int
     height: int
-    # True when the region runs past what the preview can show. The scan
-    # still captures it; you just cannot see it here.
+    # True when the region runs past the canvas, which is the scannable area.
+    # That part of the sheet is not captured at all.
+    #
+    # clipped_left carries a default only so the three-flag constructor call
+    # in the tests still builds. Every constructor in this module sets all
+    # four; an anchor on the right or the bottom overflows the low edges, so
+    # leaving one out would report a sheet as fitting when it does not.
     clipped_top: bool
     clipped_bottom: bool
     clipped_right: bool
+    clipped_left: bool = False
 
 
 def visible_still_rows(still: tuple[int, int], preview: tuple[int, int]) -> tuple[float, float]:
@@ -313,6 +319,7 @@ def turn_mark(mark: Mark, rotate_deg: int, sensor: tuple[int, int]) -> Mark:
         clipped_top=y < 0,
         clipped_bottom=y + h > ph,
         clipped_right=x + w > pw,
+        clipped_left=x < 0,
     )
 
 
@@ -440,6 +447,7 @@ def marks(cfg: Config) -> list[Mark]:
                 clipped_top=py < -0.5,
                 clipped_bottom=py + phei > ph + 0.5,
                 clipped_right=px + pwid > pw + 0.5,
+                clipped_left=px < -0.5,
             )
         )
     return out
@@ -447,6 +455,20 @@ def marks(cfg: Config) -> list[Mark]:
 
 # Distinct hues that survive being drawn over paper and over a dark desk.
 MARK_COLOURS = ("red", "lime", "cyan", "yellow", "magenta")
+
+# Crop-mark line width, in published stream pixels, for every mark.
+#
+# One number, not a function of the mark's rank. Widths used to run from 6
+# down to 2 so that sizes sharing an edge drew concentrically, which meant
+# ticking a fourth paper size rethickened the first three, and a stream whose
+# size follows the video mode drew the same rank at a different width on
+# screen. Coincident edges only happen at the anchor, and two colours meeting
+# there costs less than a line whose width means nothing.
+MARK_THICKNESS = 3
+
+# The union-of-papers box. Thinner than a mark, because it is a summary of
+# them rather than one more of them.
+UNION_THICKNESS = 2
 
 
 def union_rect(marked: list[Mark]) -> tuple[int, int, int, int]:
@@ -511,6 +533,31 @@ def _outside_bands(cfg: Config, rect: tuple[int, int, int, int], colour: str,
         for bx, by, bw, bh in candidates
         if bw > 0 and bh > 0 and bx < pw and by < ph
     ]
+
+
+def outside_of(rect: tuple[int, int, int, int],
+               container: tuple[int, int, int, int]
+               ) -> list[tuple[int, int, int, int]]:
+    """The parts of `rect` that lie outside `container`.
+
+    Up to four bands, and they never overlap: the left and right bands take
+    the mark's full height, the top and bottom bands only the width the two
+    rectangles share. Overlapping bands would blend the tint twice and paint
+    the corners darker than the edges, which reads as a fifth region rather
+    than as one warning.
+    """
+    rx, ry, rw, rh = rect
+    cx, cy, cw, ch = container
+    cright, cbottom = cx + cw, cy + ch
+    xa, xb = max(rx, cx), min(rx + rw, cright)
+    bands = [
+        (rx, ry, min(cx, rx + rw) - rx, rh),                       # left
+        (max(cright, rx), ry, rx + rw - max(cright, rx), rh),      # right
+        (xa, ry, xb - xa, min(cy, ry + rh) - ry),                  # above
+        (xa, max(cbottom, ry), xb - xa,
+         ry + rh - max(cbottom, ry)),                              # below
+    ]
+    return [b for b in bands if b[2] > 0 and b[3] > 0]
 
 
 def fit_transform(cfg: Config, marked: list[Mark]) -> tuple[float, int, int]:
@@ -591,6 +638,7 @@ def place(mark: Mark, scale: float, off_x: int, off_y: int) -> Mark:
         clipped_top=mark.clipped_top,
         clipped_bottom=mark.clipped_bottom,
         clipped_right=mark.clipped_right,
+        clipped_left=mark.clipped_left,
     )
 
 
@@ -649,20 +697,28 @@ def overlay_chain(cfg: Config) -> str:
     parts += _outside_bands(cfg, rect, cfg.preview.outside_colour, clip=live)
     ux, uy, uw, uh = rect
     parts.append(
-        f"drawbox=x={ux}:y={uy}:w={uw}:h={uh}:color=white@0.85:t=2"
+        f"drawbox=x={ux}:y={uy}:w={uw}:h={uh}"
+        f":color=white@0.85:t={UNION_THICKNESS}"
     )
 
-    # Thickest first, thinning as the papers get smaller. Sizes that share an
-    # edge -- which anchoring to a corner makes the normal case, not the
-    # exception -- would otherwise stack in one place and show only whichever
-    # colour happened to be drawn last. Concentric widths let all of them be
-    # seen at once.
+    # The canvas is the scannable area, so anything of a mark outside it is
+    # sheet the scan will not reach. Tinted before the marks are drawn, so a
+    # mark's own line stays on top of its warning and the colour still says
+    # which paper size is overflowing.
+    canvas = ghost_rect(cfg, scale, off_x, off_y)
+    for m in marked:
+        for bx, by, bw, bh in outside_of(
+                (m.x, m.y, m.width, m.height), canvas):
+            parts.append(
+                f"drawbox=x={bx}:y={by}:w={bw}:h={bh}"
+                f":color={cfg.preview.overflow_colour}:t=fill"
+            )
+
     for i, m in enumerate(marked):
         colour = MARK_COLOURS[i % len(MARK_COLOURS)]
-        thickness = max(2, min(6, len(marked) + 1 - i))
         parts.append(
             f"drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}"
-            f":color={colour}@0.9:t={thickness}"
+            f":color={colour}@0.9:t={MARK_THICKNESS}"
         )
         # Keep the label on screen when the box starts above the frame, and
         # stagger them: marks that share a top edge would otherwise stack

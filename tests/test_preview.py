@@ -183,10 +183,8 @@ def test_loopback_output_is_added_only_when_configured():
 
 def test_marks_are_burned_in_by_ffmpeg_not_python():
     chain = preview.filter_chain(Config())
-    # One outlined box per paper, over and above the union frame and the
-    # filled dimming bands. Matched on the paper colours rather than on a
-    # thickness: thickness now varies per paper so that sizes sharing an edge
-    # stay individually visible instead of stacking into one colour.
+    # One outlined box per paper, over and above the union frame, the filled
+    # dimming bands and the overflow tint.
     paper_boxes = [p for p in chain.split(",")
                    if p.startswith("drawbox")
                    and any(f"color={c}@" in p for c in preview.MARK_COLOURS)]
@@ -195,22 +193,28 @@ def test_marks_are_burned_in_by_ffmpeg_not_python():
         assert f"text='{name}'" in chain
 
 
-def test_marks_sharing_an_edge_are_drawn_at_different_thicknesses():
-    """Anchoring to a corner makes coincident edges the normal case.
+@pytest.mark.parametrize("papers", [
+    (("A4", 210.0, 297.0),),
+    (("A4", 210.0, 297.0), ("A5", 148.0, 210.0), ("Letter", 215.9, 279.4)),
+    (("A6", 105.0, 148.0), ("B7", 88.0, 125.0)),
+])
+@pytest.mark.parametrize("mode", [(1280, 720), (640, 480)])
+def test_every_mark_is_the_same_thickness_in_every_configuration(papers, mode):
+    """A line width that means nothing must at least not change.
 
-    Every mark then starts at the same pixel, and equal-thickness outlines
-    stack so that only whichever colour was drawn last can be seen. Concentric
-    widths keep all of them visible at once.
+    Widths used to run 6 down to 2 by rank, so ticking a fourth paper size
+    rethickened the first three and a different video mode drew the same rank
+    at a different width on screen. One number, whatever is ticked and
+    whatever the camera is streaming.
     """
-    cfg = replace(Config(), rig=replace(Config().rig, anchor="top-left"))
-    chain = preview.filter_chain(cfg)
-    boxes = [p for p in chain.split(",")
+    base = Config()
+    cfg = replace(base, preview=replace(base.preview, papers=papers,
+                                        width=mode[0], height=mode[1]))
+    boxes = [p for p in preview.filter_chain(cfg).split(",")
              if p.startswith("drawbox")
              and any(f"color={c}@" in p for c in preview.MARK_COLOURS)]
-    thicknesses = [int(p.split(":t=")[1]) for p in boxes]
-    assert len(set(thicknesses)) == len(thicknesses), thicknesses
-    # Largest paper outermost, so the smaller ones sit inside it.
-    assert thicknesses == sorted(thicknesses, reverse=True)
+    assert len(boxes) == len(papers)
+    assert {int(p.split(":t=")[1]) for p in boxes} == {preview.MARK_THICKNESS}
 
 
 def test_labels_do_not_stack_on_a_shared_top_edge():
@@ -434,7 +438,13 @@ def test_the_dimming_stays_off_the_border():
     assert scale < 1.0, "this fixture must produce a border, or it tests nothing"
     vx, vy, vw, vh = preview.video_rect(cfg, scale, ox, oy)
 
-    for x, y, w, h in _boxes(preview.filter_chain(cfg), lambda p: "t=fill" in p):
+    # The dimming bands only, by colour. The overflow tint is also a filled
+    # box and belongs in the border by design: it marks sheet that runs past
+    # the scannable area, which is exactly where the border is.
+    def dimming(part):
+        return "t=fill" in part and cfg.preview.outside_colour in part
+
+    for x, y, w, h in _boxes(preview.filter_chain(cfg), dimming):
         assert x >= vx and y >= vy, (x, y)
         assert x + w <= vx + vw and y + h <= vy + vh, (x, y, w, h)
 
@@ -1107,3 +1117,59 @@ def test_a_turned_camera_moves_the_strips_to_the_vertical_edges(width, height):
     # And the far strip survives below it.
     _x0, _y0, _x1, y1 = preview.visible_still_region(cfg)
     assert preview.upright_still(cfg)[1] - y1 > 0
+
+
+def _tint_boxes(cfg):
+    return _boxes(preview.filter_chain(cfg),
+                  lambda p: cfg.preview.overflow_colour in p)
+
+
+def test_a_paper_that_fits_gets_no_overflow_tint():
+    base = Config()
+    cfg = replace(base, preview=replace(base.preview, papers=(
+        ("A4", 210.0, 297.0), ("A5", 148.0, 210.0))))
+    assert [m.name for m in preview.marks(cfg) if m.clipped_right] == []
+    assert _tint_boxes(cfg) == []
+
+
+def test_the_part_of_a_sheet_past_the_scannable_area_is_tinted():
+    """The mark alone does not say a sheet will be cut off.
+
+    A rectangle running off the canvas looks the same as one the zoom-out made
+    room for, and the difference is whether that part of the page is captured.
+    """
+    base = Config()
+    cfg = replace(base, preview=replace(
+        base.preview, papers=(("Legal", 215.9, 355.6),)))
+    raw = preview.marks(cfg)
+    assert raw[0].clipped_left and raw[0].clipped_right
+    scale, ox, oy = preview.fit_transform(cfg, raw)
+    cx, cy, cw, ch = preview.ghost_rect(cfg, scale, ox, oy)
+
+    tinted = _tint_boxes(cfg)
+    assert tinted, "an oversized sheet must be marked as one"
+    # Every band lies outside the canvas, which is the scannable area.
+    for x, y, w, h in tinted:
+        assert (x + w <= cx or x >= cx + cw
+                or y + h <= cy or y >= cy + ch), (x, y, w, h)
+    # And they do not overlap each other, which would blend the tint twice and
+    # paint the corners darker than the edges.
+    for i, (x, y, w, h) in enumerate(tinted):
+        for ox2, oy2, ow, oh in tinted[i + 1:]:
+            assert (x + w <= ox2 or ox2 + ow <= x
+                    or y + h <= oy2 or oy2 + oh <= y), (tinted)
+
+
+def test_an_anchored_sheet_overflows_the_edges_the_anchor_pushes_it_off():
+    """clipped_left and clipped_top existed for nobody: with a centre anchor
+    an oversized sheet spills both ways, but an anchor names an edge and
+    pushes the spill entirely onto the opposite one."""
+    base = Config()
+    cfg = replace(
+        base,
+        rig=replace(base.rig, anchor="top-left"),
+        preview=replace(base.preview, papers=(("Legal", 215.9, 355.6),)),
+    )
+    m = preview.marks(cfg)[0]
+    assert m.clipped_right and m.clipped_bottom
+    assert not m.clipped_left and not m.clipped_top

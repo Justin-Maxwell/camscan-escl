@@ -30,13 +30,25 @@ class DeadStream(preview_mod.PreviewStream):
 
 
 @pytest.fixture
-def daemon(request):
-    """A daemon whose preview is deliberately broken, unless asked otherwise."""
+def daemon(request, tmp_path, monkeypatch):
+    """A daemon whose preview is deliberately broken, unless asked otherwise.
+
+    ADJUSTMENTS_PATH is redirected first, before anything can post. Both
+    `/preview/settings` and `/preview/controls` call `save_adjustments(cfg)`
+    with no path, which is the REAL `~/.config/camscan-escl/adjustments.json`
+    -- so one POST from a test replaces a running daemon's saved rig with
+    this file's defaults, and the loss only shows up at the next restart.
+    Exactly the failure `test_generated_state_never_lands_in_the_real_config
+    _directory` records for the ghost image, on the other file.
+    """
+    monkeypatch.setattr(server.config_mod, "ADJUSTMENTS_PATH",
+                        tmp_path / "adjustments.json")
     argv = getattr(request, "param",
                    ["sh", "-c", "echo 'Not a video capture device.' >&2; exit 237"])
     cfg = Config(
         server=ServerConfig(port=0, bind="127.0.0.1"),
         preview=replace(PreviewConfig(), loopback_device=""),
+        state_dir=tmp_path,
     )
     stream = DeadStream(cfg)
     # Patched on the instance's module so build_command stays untouched
@@ -137,3 +149,60 @@ def test_status_carries_the_device_inventory(daemon):
     # /dev/video0 this boot", so it must reach the client.
     assert "inventory" in body and "devices" in body
     assert isinstance(body["inventory"], list)
+
+
+def test_the_page_can_tell_when_its_overlay_has_gone_stale(daemon):
+    """The overlay is server-rendered, so nothing in the page redraws itself.
+
+    A settings change from the GUI moved the marks burned into the video while
+    the page's own SVG stayed where it was, and the two disagreed with no way
+    to tell which was current. The page polls this endpoint and reloads when
+    it moves, so it has to move.
+    """
+    status, before = get_json(f"{daemon}/preview/geometry")
+    assert status == 200
+    assert [m[0] for m in before["marks"]] == ["A4", "A5", "Letter"]
+
+    req = urllib.request.Request(
+        f"{daemon}/preview/settings",
+        data=json.dumps({"papers": [["A6", 105.0, 148.0]]}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        assert r.status == 200
+
+    _status, after = get_json(f"{daemon}/preview/geometry")
+    assert [m[0] for m in after["marks"]] == ["A6"]
+    assert after != before
+
+
+def test_the_page_embeds_the_geometry_it_was_drawn_from(daemon):
+    """Or the first poll sets its own baseline and loses any change made
+    between the render and that request."""
+    _status, geometry = get_json(f"{daemon}/preview/geometry")
+    with urllib.request.urlopen(f"{daemon}/preview", timeout=30) as r:
+        page = r.read().decode()
+    assert json.dumps(geometry) in page
+    assert "/preview/geometry" in page
+
+
+def test_a_settings_post_never_writes_the_real_adjustments_file(daemon, tmp_path):
+    """The suite overwrote a running daemon's saved rig, twice over.
+
+    `_settings_post` and `_store_controls` both call `save_adjustments(cfg)`
+    with no path, so any test that posts writes the user's live file with
+    this module's Config() defaults. The daemon in memory is untouched, which
+    is what makes it silent: the calibration is only lost at the next restart.
+    """
+    from camscan_escl import config as config_mod
+
+    assert config_mod.ADJUSTMENTS_PATH.parent == tmp_path
+
+    req = urllib.request.Request(
+        f"{daemon}/preview/settings",
+        data=json.dumps({"anchor": "top-left"}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        assert r.status == 200
+
+    written = json.loads(config_mod.ADJUSTMENTS_PATH.read_text())
+    assert written["anchor"] == "top-left"

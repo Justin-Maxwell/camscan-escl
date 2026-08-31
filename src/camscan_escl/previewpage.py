@@ -13,14 +13,23 @@ from __future__ import annotations
 import html
 
 from .config import Config
-from .preview import (Mark, fence_edge, ghost_axis, preview_size, union_rect,
-                      upright_still, visible_still_region)
+from . import preview as preview_mod
+from .preview import (MARK_THICKNESS, UNION_THICKNESS, Mark, fence_edge,
+                      fit_transform, ghost_axis, ghost_rect, outside_of,
+                      preview_size, union_rect, upright_still,
+                      visible_still_region)
 
 # Distinct hues, readable against paper and against a dark desk alike.
 COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
 
+# The overflow tint. Hard-coded rather than read from preview.overflow_colour,
+# which is an ffmpeg colour spec and not a CSS one; kept at the same hue and
+# opacity so the page and the stream say the same thing.
+OVERFLOW_COLOUR = "#ff4500"      # orangered
+OVERFLOW_OPACITY = "0.4"
 
-def page_html(cfg: Config, marks: list[Mark]) -> str:
+
+def page_html(cfg: Config, marks: list[Mark], geometry: str = "null") -> str:
     w, h = preview_size(cfg)
     # How much scannable area sits outside the picture, per edge. Both edges
     # hide a strip on an unfenced rig; a fence removes the strip on the edge
@@ -59,15 +68,30 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
         f'<path d="M0,0 H{w} V{h} H0 Z M{ux},{uy} h{uw} v{uh} h{-uw} Z" '
         f'fill="#000" fill-opacity="0.55" fill-rule="evenodd" />',
         f'<rect x="{ux}" y="{uy}" width="{uw}" height="{uh}" fill="none" '
-        f'stroke="#fff" stroke-opacity="0.85" stroke-width="2" />',
+        f'stroke="#fff" stroke-opacity="0.85" '
+        f'stroke-width="{UNION_THICKNESS}" />',
     ]
+
+    # The same warning the stream carries, in the same place: the parts of a
+    # mark outside the canvas are sheet no scan reaches. The page draws it
+    # itself rather than relying on the burnt-in one, because the two are
+    # generated from one geometry and disagreeing about it is the bug this
+    # overlay exists to catch.
+    canvas = ghost_rect(cfg, *fit_transform(cfg, preview_mod.marks(cfg)))
+    for m in marks:
+        for bx, by, bw, bh in outside_of((m.x, m.y, m.width, m.height), canvas):
+            shapes.append(
+                f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" '
+                f'fill="{OVERFLOW_COLOUR}" fill-opacity="{OVERFLOW_OPACITY}" />'
+            )
+
     legend = []
     for i, m in enumerate(marks):
         colour = COLOURS[i % len(COLOURS)]
         shapes.append(
             f'<rect x="{m.x}" y="{m.y}" width="{m.width}" height="{m.height}" '
-            f'fill="none" stroke="{colour}" stroke-width="3" '
-            f'stroke-dasharray="12 8" />'
+            f'fill="none" stroke="{colour}" '
+            f'stroke-width="{MARK_THICKNESS}" stroke-dasharray="12 8" />'
         )
         # Staggered: marks sharing a top edge would pile their labels up.
         label_y = max(m.y + 24, 24) + i * 30
@@ -78,12 +102,20 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
             f'style="paint-order:stroke;stroke:#000;stroke-width:4px">'
             f"{html.escape(m.name)}</text>"
         )
-        notes = []
-        if m.clipped_bottom:
-            notes.append("extends below the preview")
-        if m.clipped_right:
-            notes.append("wider than the frame")
-        note = f" — {', '.join(notes)}" if notes else ""
+        # All four edges. An anchor on the right or the bottom pushes an
+        # oversized sheet off the low edges instead, and naming only two of
+        # them reported those sheets as fitting.
+        overflows = [name for name, flag in (
+            ("left", m.clipped_left), ("top", m.clipped_top),
+            ("right", m.clipped_right), ("bottom", m.clipped_bottom),
+        ) if flag]
+        if not overflows:
+            note = ""
+        else:
+            edges = (overflows[0] if len(overflows) == 1
+                     else ", ".join(overflows[:-1]) + " and " + overflows[-1])
+            note = (f" — runs past the {edges} of the scannable area, "
+                    f"and is not captured there")
         legend.append(
             f'<li><span class="swatch" style="background:{colour}"></span>'
             f"{html.escape(m.name)}{html.escape(note)}</li>"
@@ -129,6 +161,24 @@ def page_html(cfg: Config, marks: list[Mark]) -> str:
         img.src = '/preview/stream?r=' + Date.now();
       }}, 1500);
     }});
+  }})();
+
+  // The overlay is server-rendered, so a settings change from the GUI moved
+  // the marks in the video underneath while these stayed where they were --
+  // two sets of crop marks disagreeing, with no way to tell which was
+  // current. Poll the geometry the overlay was drawn from and reload when it
+  // moves. Its own endpoint, because /preview/settings asks the camera for
+  // its mode list and that has no business on a two-second timer.
+  (function () {{
+    var drawn = JSON.stringify({geometry});
+    setInterval(function () {{
+      fetch('/preview/geometry', {{cache: 'no-store'}})
+        .then(function (r) {{ return r.ok ? r.json() : null; }})
+        .then(function (g) {{
+          if (g && JSON.stringify(g) !== drawn) location.reload();
+        }})
+        .catch(function () {{}});   // daemon restarting; try again next tick
+    }}, 2000);
   }})();
 </script>
 <p class="note">

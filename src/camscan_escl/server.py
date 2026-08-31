@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -18,6 +19,15 @@ log = logging.getLogger(__name__)
 
 BASE = "/eSCL"
 PREVIEW = "/preview"
+
+# One settings change at a time. The server threads, applying a change is a
+# read-modify-write of the class-level config, and the pipeline restart inside
+# it takes about a second -- longer than the GUI's 350 ms debounce, so a
+# second change during the first one is the ordinary case rather than a race
+# to be tolerated. Unserialised, the two restarts interleave and the picture
+# ends up drawn from whichever config was written last, which is not
+# necessarily the one the user chose last.
+_settings_lock = threading.Lock()
 
 
 class ESCLHandler(BaseHTTPRequestHandler):
@@ -64,6 +74,8 @@ class ESCLHandler(BaseHTTPRequestHandler):
             return self._preview_frame()
         if path == PREVIEW + "/settings":
             return self._settings_get()
+        if path == PREVIEW + "/geometry":
+            return self._preview_geometry()
         if path == PREVIEW + "/status":
             return self._preview_status()
         if path == PREVIEW + "/controls":
@@ -141,6 +153,29 @@ class ESCLHandler(BaseHTTPRequestHandler):
 
     # -- preview ---------------------------------------------------------
 
+    @staticmethod
+    def _geometry(cfg: Config) -> dict:
+        """Everything the preview page's overlay is drawn from.
+
+        Its own endpoint rather than a slice of /preview/settings, because the
+        page polls this and `preview_modes` in that response asks the camera
+        what it can do. Polling would put a v4l2 probe on a timer to answer a
+        question whose answer is in the config.
+        """
+        raw = preview_mod.marks(cfg)
+        scale, ox, oy = preview_mod.fit_transform(cfg, raw)
+        placed = [preview_mod.place(m, scale, ox, oy) for m in raw]
+        return {
+            "size": list(preview_mod.preview_size(cfg)),
+            "marks": [[m.name, m.x, m.y, m.width, m.height,
+                       m.clipped_left, m.clipped_top,
+                       m.clipped_right, m.clipped_bottom] for m in placed],
+        }
+
+    def _preview_geometry(self) -> None:
+        self._send(200, json.dumps(self._geometry(type(self).config)).encode(),
+                   "application/json")
+
     def _settings_get(self) -> None:
         cfg = type(self).config
         body = json.dumps({
@@ -182,6 +217,11 @@ class ESCLHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._send(400, f"bad JSON: {exc}".encode(), "text/plain")
 
+        with _settings_lock:
+            return self._apply_settings(data)
+
+    def _apply_settings(self, data: dict) -> None:
+        """The body of a settings change, with `_settings_lock` already held."""
         try:
             cfg = config_mod.apply_adjustments(type(self).config, data)
             config_mod.validate(cfg)
@@ -394,7 +434,12 @@ class ESCLHandler(BaseHTTPRequestHandler):
         cfg = self.config
         raw = preview_mod.marks(cfg)
         scale, ox, oy = preview_mod.fit_transform(cfg, raw)
-        html = page_html(cfg, [preview_mod.place(m, scale, ox, oy) for m in raw])
+        # The geometry goes into the page as well as being served, so the
+        # first poll compares against what was actually drawn. Letting the
+        # poll set its own baseline loses any change made between the render
+        # and that first request.
+        html = page_html(cfg, [preview_mod.place(m, scale, ox, oy) for m in raw],
+                         geometry=json.dumps(self._geometry(cfg)))
         self._send(200, html.encode(), "text/html; charset=utf-8")
 
     def _unavailable(self) -> None:
