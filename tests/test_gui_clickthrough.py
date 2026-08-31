@@ -246,3 +246,20 @@ def _walk(widget):
     while child:
         yield from _walk(child)
         child = child.get_next_sibling()
+
+
+def test_the_sidebar_swatches_are_the_colours_ffmpeg_draws():
+    """The one correspondence in this window that is kept by hand.
+
+    gui.SWATCHES is spelt out rather than imported, so the window stays a pure
+    HTTP client. That is worth a test and not a comment: there were three
+    palettes for one set of rectangles -- the burnt-in marks, the preview
+    page's SVG, and these -- and the middle one agreed with neither.
+    """
+    from camscan_escl.preview import MARK_COLOURS
+
+    named = {"red": "#ff0000", "lime": "#00ff00", "cyan": "#00ffff",
+             "yellow": "#ffff00", "magenta": "#ff00ff"}
+    assert len(gui.SWATCHES) == len(MARK_COLOURS)
+    for name, hexcolour in zip(MARK_COLOURS, gui.SWATCHES):
+        assert named[name] == hexcolour, f"{name} is not {hexcolour}"

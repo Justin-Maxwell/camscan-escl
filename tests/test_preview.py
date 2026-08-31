@@ -1173,3 +1173,39 @@ def test_an_anchored_sheet_overflows_the_edges_the_anchor_pushes_it_off():
     m = preview.marks(cfg)[0]
     assert m.clipped_right and m.clipped_bottom
     assert not m.clipped_left and not m.clipped_top
+
+
+def test_the_page_does_not_draw_the_marks_a_second_time():
+    """Every rectangle the page used to draw was already in the stream.
+
+    The SVG overlay carried marks, labels, the dead zone and the union box in
+    the image's own coordinate space -- all of which ffmpeg had burned in
+    underneath -- so each appeared twice, in two palettes, and the legend
+    swatch matched neither the video nor the GUI sidebar. The burnt-in copy is
+    the one that must exist: it is what the loopback publishes and what the
+    GTK window shows, and neither can carry an overlay.
+    """
+    cfg = Config()
+    raw = preview.marks(cfg)
+    scale, ox, oy = preview.fit_transform(cfg, raw)
+    html = previewpage.page_html(cfg, [preview.place(m, scale, ox, oy)
+                                       for m in raw])
+    for tag in ("<svg", "<rect", "<path", "stroke-dasharray"):
+        assert tag not in html, f"the page is drawing geometry again: {tag}"
+    # One image, and it is the stream the loopback and the GUI also show.
+    assert html.count("/preview/stream") >= 1
+
+
+def test_the_legend_swatch_is_the_colour_ffmpeg_actually_drew():
+    """A swatch is a promise about a line in the picture. It used to name a
+    rectangle the page drew for itself, in a palette of its own."""
+    cfg = Config()
+    raw = preview.marks(cfg)
+    scale, ox, oy = preview.fit_transform(cfg, raw)
+    marked = [preview.place(m, scale, ox, oy) for m in raw]
+    html = previewpage.page_html(cfg, marked)
+    chain = preview.filter_chain(cfg)
+    for i, m in enumerate(marked):
+        colour = preview.MARK_COLOURS[i % len(preview.MARK_COLOURS)]
+        assert f'style="background:{colour}"' in html
+        assert f":color={colour}@" in chain

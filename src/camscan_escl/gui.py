@@ -39,8 +39,14 @@ KNOWN_PAPERS = (
     ("Legal", 215.9, 355.6),
 )
 
-# Must match preview.MARK_COLOURS, and in the same order: the swatch beside a
+# preview.MARK_COLOURS as hex, in the same order: the swatch beside a
 # checkbox is a promise about which line in the picture it refers to.
+#
+# Spelt out rather than imported, so this window stays a pure HTTP client that
+# can run on another machine without the daemon's imaging dependencies. That
+# makes the correspondence a hand-kept one, so a test asserts it rather than a
+# comment asking for it -- there were three palettes for one set of
+# rectangles, and two of them disagreed.
 SWATCHES = ("#ff0000", "#00ff00", "#00ffff", "#ffff00", "#ff00ff")
 
 # Camera rotation, as offered in the dropdown.

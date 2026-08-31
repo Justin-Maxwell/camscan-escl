@@ -1,11 +1,21 @@
-"""The preview page: a live frame with crop marks drawn over it.
+"""The preview page: the marked-up stream, a legend, and what it cannot show.
 
 Deliberately one self-contained file with no assets and no JavaScript
 framework. The daemon is a scanner, not a web app, and a positioning aid
 that needs a build step would not survive contact with a rig.
 
-The overlay is an SVG in the same coordinate space as the preview image, so
-the two scale together however the browser lays the page out.
+The page draws NO geometry of its own. It used to carry an SVG overlay in the
+image's coordinate space -- marks, labels, the dead zone, the union box --
+every one of which ffmpeg had already burned into the stream underneath it.
+So each rectangle appeared twice, in two different palettes, and the legend
+swatch matched the SVG rather than the video or the GUI sidebar. Three
+colourings of one set of rectangles, and nothing to say which was current.
+
+The burnt-in copy is the one that has to exist: it is what the v4l2loopback
+device publishes to Kamoso, and what the GTK window shows, neither of which
+can carry an overlay. So the page shows the same picture those do, and adds
+only what a picture cannot say -- which colour is which paper size, and how
+much scannable area lies outside the frame.
 """
 
 from __future__ import annotations
@@ -13,24 +23,15 @@ from __future__ import annotations
 import html
 
 from .config import Config
-from . import preview as preview_mod
-from .preview import (MARK_THICKNESS, UNION_THICKNESS, Mark, fence_edge,
-                      fit_transform, ghost_axis, ghost_rect, outside_of,
-                      preview_size, union_rect, upright_still,
-                      visible_still_region)
-
-# Distinct hues, readable against paper and against a dark desk alike.
-COLOURS = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4")
-
-# The overflow tint. Hard-coded rather than read from preview.overflow_colour,
-# which is an ffmpeg colour spec and not a CSS one; kept at the same hue and
-# opacity so the page and the stream say the same thing.
-OVERFLOW_COLOUR = "#ff4500"      # orangered
-OVERFLOW_OPACITY = "0.4"
+from .preview import (MARK_COLOURS, Mark, fence_edge, ghost_axis,
+                      preview_size, upright_still, visible_still_region)
 
 
 def page_html(cfg: Config, marks: list[Mark], geometry: str = "null") -> str:
-    w, h = preview_size(cfg)
+    # Width only. The height was the SVG overlay's viewBox; with the overlay
+    # gone the image sets its own, and capping the width is what stops a
+    # 1180-wide stream being blown up to the window.
+    w = preview_size(cfg)[0]
     # How much scannable area sits outside the picture, per edge. Both edges
     # hide a strip on an unfenced rig; a fence removes the strip on the edge
     # it stands on, leaving only the far one. After a transpose the strips are
@@ -60,48 +61,14 @@ def page_html(cfg: Config, marks: list[Mark], geometry: str = "null") -> str:
         f"</p>"
     )
 
-    # The dead zone: everything outside the union of the paper sizes can
-    # never appear in any scan. One path with evenodd, which SVG can express
-    # and drawbox cannot.
-    ux, uy, uw, uh = union_rect(marks)
-    shapes = [
-        f'<path d="M0,0 H{w} V{h} H0 Z M{ux},{uy} h{uw} v{uh} h{-uw} Z" '
-        f'fill="#000" fill-opacity="0.55" fill-rule="evenodd" />',
-        f'<rect x="{ux}" y="{uy}" width="{uw}" height="{uh}" fill="none" '
-        f'stroke="#fff" stroke-opacity="0.85" '
-        f'stroke-width="{UNION_THICKNESS}" />',
-    ]
-
-    # The same warning the stream carries, in the same place: the parts of a
-    # mark outside the canvas are sheet no scan reaches. The page draws it
-    # itself rather than relying on the burnt-in one, because the two are
-    # generated from one geometry and disagreeing about it is the bug this
-    # overlay exists to catch.
-    canvas = ghost_rect(cfg, *fit_transform(cfg, preview_mod.marks(cfg)))
-    for m in marks:
-        for bx, by, bw, bh in outside_of((m.x, m.y, m.width, m.height), canvas):
-            shapes.append(
-                f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" '
-                f'fill="{OVERFLOW_COLOUR}" fill-opacity="{OVERFLOW_OPACITY}" />'
-            )
-
     legend = []
     for i, m in enumerate(marks):
-        colour = COLOURS[i % len(COLOURS)]
-        shapes.append(
-            f'<rect x="{m.x}" y="{m.y}" width="{m.width}" height="{m.height}" '
-            f'fill="none" stroke="{colour}" '
-            f'stroke-width="{MARK_THICKNESS}" stroke-dasharray="12 8" />'
-        )
-        # Staggered: marks sharing a top edge would pile their labels up.
-        label_y = max(m.y + 24, 24) + i * 30
-        shapes.append(
-            f'<text x="{m.x + 10}" y="{label_y}" fill="{colour}" '
-            f'font-family="system-ui, sans-serif" font-size="22" '
-            f'font-weight="600" '
-            f'style="paint-order:stroke;stroke:#000;stroke-width:4px">'
-            f"{html.escape(m.name)}</text>"
-        )
+        # The colour ffmpeg drew this mark in, so the swatch is a promise
+        # about a line in the picture rather than about a rectangle this page
+        # drew for itself. MARK_COLOURS are CSS keywords as well as ffmpeg
+        # ones, and mean the same RGB in both, so there is nothing to convert
+        # and nothing to keep in step by hand.
+        colour = MARK_COLOURS[i % len(MARK_COLOURS)]
         # All four edges. An anchor on the right or the bottom pushes an
         # oversized sheet off the low edges instead, and naming only two of
         # them reported those sheets as fitting.
@@ -129,9 +96,8 @@ def page_html(cfg: Config, marks: list[Mark], geometry: str = "null") -> str:
   body {{ font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem;
          background: #16181d; color: #e8e8ea; }}
   h1 {{ font-size: 1.1rem; margin: 0 0 .75rem; font-weight: 600; }}
-  .stage {{ position: relative; max-width: {w}px; }}
-  .stage img, .stage svg {{ width: 100%; display: block; }}
-  .stage svg {{ position: absolute; inset: 0; pointer-events: none; }}
+  .stage {{ max-width: {w}px; }}
+  .stage img {{ width: 100%; display: block; }}
   ul {{ list-style: none; padding: 0; margin: 1rem 0 0;
         display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: .9rem; }}
   .swatch {{ display: inline-block; width: .8rem; height: .8rem;
@@ -142,8 +108,7 @@ def page_html(cfg: Config, marks: list[Mark], geometry: str = "null") -> str:
 </style>
 <h1>camscan-escl — position the page</h1>
 <div class="stage">
-  <img src="/preview/stream" alt="live camera preview">
-  <svg viewBox="0 0 {w} {h}" preserveAspectRatio="none">{''.join(shapes)}</svg>
+  <img src="/preview/stream" alt="live camera preview with the crop marks in it">
 </div>
 <ul>{''.join(legend)}</ul>
 <script>
